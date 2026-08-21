@@ -29,6 +29,7 @@ from .model import ColumnRef, Finding, ScanResult, TableStat
 from .nlp import NerTagger
 from .pacing import Pacer
 from .planning import Plan, build_plan
+from .progress import ProgressBar
 from .sources.base import (
     ColumnInfo, ReadWriteAccessError, Sample, Source, SourceError, TableInfo,
     build_source,
@@ -120,23 +121,28 @@ class Scanner:
             })
 
             scanned: Dict[str, TableStat] = {}
-            for i, item in enumerate(targets, 1):
-                if self.pacer.expired():
-                    self._warn(
-                        f"[{src_cfg.name}] прогон остановлен по бюджету времени: "
-                        f"обследовано {i - 1} таблиц из {len(targets)}. "
-                        f"Увеличьте throttle.max_duration_min или сузьте охват."
-                    )
-                    break
-                self._progress(src_cfg.name, i, len(targets), item.table)
-                try:
-                    stat = self._scan_table(source, item.table, item.columns)
-                except Exception as exc:  # noqa: BLE001
-                    self._error(f"[{src_cfg.name}] {item.table.qualified}: {exc}")
-                    continue
-                scanned[item.table.qualified] = stat
-                if stat.findings:
-                    self.result.tables.append(stat)
+            with ProgressBar(len(targets), mode=self.options.progress,
+                             title=src_cfg.name) as bar:
+                for i, item in enumerate(targets, 1):
+                    if self.pacer.expired():
+                        self._warn(
+                            f"[{src_cfg.name}] прогон остановлен по бюджету "
+                            f"времени: обследовано {i - 1} таблиц из "
+                            f"{len(targets)}. Увеличьте "
+                            f"throttle.max_duration_min или сузьте охват."
+                        )
+                        break
+                    self._progress(bar, src_cfg.name, i, len(targets),
+                                   item.table)
+                    try:
+                        stat = self._scan_table(source, item.table, item.columns)
+                    except Exception as exc:  # noqa: BLE001
+                        self._error(
+                            f"[{src_cfg.name}] {item.table.qualified}: {exc}")
+                        continue
+                    scanned[item.table.qualified] = stat
+                    if stat.findings:
+                        self.result.tables.append(stat)
 
             for item in plan.inferred_items:
                 origins = [
@@ -200,11 +206,21 @@ class Scanner:
         stat.findings.sort(key=lambda f: (-f.score, f.ref.full_column))
         return stat
 
-    def _progress(self, source_name: str, done: int, total: int,
-                  table: TableInfo) -> None:
+    def _progress(self, bar: ProgressBar, source_name: str, done: int,
+                  total: int, table: TableInfo) -> None:
         eta = self.pacer.eta(done - 1, total)
-        log.info("[%s] (%d/%d) %s%s", source_name, done, total,
-                 table.qualified, f" — {eta}" if eta else "")
+        if bar.enabled:
+            bar.advance(table.qualified, eta)
+            return
+        # Без терминала (cron, systemd, docker без -t) полоса бессмысленна:
+        # пишем в журнал редкие отметки вместо тысячи строк
+        step = max(1, total // 20)
+        if done == 1 or done == total or done % step == 0:
+            log.info("[%s] %d/%d (%d%%)%s", source_name, done, total,
+                     done * 100 // total, f" — {eta}" if eta else "")
+        else:
+            log.debug("[%s] (%d/%d) %s", source_name, done, total,
+                      table.qualified)
 
     # --- таблица ----------------------------------------------------------
 

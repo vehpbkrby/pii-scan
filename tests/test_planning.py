@@ -175,3 +175,39 @@ def test_without_order_key_falls_back_to_head():
 def test_explicit_strategies():
     assert _dummy("head").sample_parts(100, True) == [(100, False)]
     assert _dummy("tail").sample_parts(100, True) == [(100, True)]
+
+
+# --- индикатор выполнения ---------------------------------------------------
+
+def test_progress_bar_renders_and_counts():
+    import io as _io
+    from pii_scan.progress import ProgressBar, active
+
+    stream = _io.StringIO()
+    with ProgressBar(4, mode="on", title="src", stream=stream) as bar:
+        assert active() is bar
+        bar.advance("db.table_one", "осталось ~1 мин")
+        assert bar.done == 1
+        bar.advance("db.table_two")
+    assert active() is None
+    output = stream.getvalue()
+    assert "src" in output and "1/4" in output and "2/4" in output
+    assert "50%" in output
+
+
+def test_progress_off_writes_nothing():
+    import io as _io
+    from pii_scan.progress import ProgressBar
+
+    stream = _io.StringIO()
+    with ProgressBar(10, mode="off", stream=stream) as bar:
+        bar.advance("db.table")
+    assert stream.getvalue() == ""
+
+
+def test_progress_auto_is_disabled_without_terminal():
+    import io as _io
+    from pii_scan.progress import ProgressBar
+
+    bar = ProgressBar(10, mode="auto", stream=_io.StringIO())
+    assert not bar.enabled

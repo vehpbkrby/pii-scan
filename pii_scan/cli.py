@@ -11,6 +11,7 @@ from typing import List
 from . import __version__
 from .config import AppConfig, ConfigError, find_default_config, load_config
 from .report import console, jsonout, markdown, xlsx
+from .progress import active as active_bar
 from .scanner import Scanner
 from .sources.base import ReadWriteAccessError
 
@@ -73,11 +74,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-values", action="store_true",
                         help="не маскировать примеры значений в отчётах "
                              "(отчёт станет носителем ПДн!)")
+    parser.add_argument("--progress", choices=("auto", "on", "off"),
+                        help="индикатор выполнения: auto — только в терминале "
+                             "(по умолчанию), on — всегда, off — никогда")
     parser.add_argument("-q", "--quiet", action="store_true", help="только ошибки")
     parser.add_argument("-v", "--verbose", action="store_true", help="подробный лог")
     parser.add_argument("--version", action="version",
                         version=f"pii-scan {__version__}")
     return parser
+
+
+class ProgressAwareHandler(logging.StreamHandler):
+    """Стирает полосу прогресса перед строкой лога и рисует её заново."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        bar = active_bar()
+        if bar is not None:
+            bar.clear()
+        super().emit(record)
+        if bar is not None:
+            bar.redraw()
 
 
 def setup_logging(args: argparse.Namespace) -> None:
@@ -86,11 +102,10 @@ def setup_logging(args: argparse.Namespace) -> None:
         level = logging.ERROR
     elif args.verbose:
         level = logging.DEBUG
-    logging.basicConfig(
-        level=level, stream=sys.stderr,
-        format="%(asctime)s %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    handler = ProgressAwareHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S"))
+    logging.basicConfig(level=level, handlers=[handler])
     if not args.verbose:
         # Драйверы печатают полный traceback на каждую ошибку подключения.
         # Свою причину мы и так покажем одной строкой.
@@ -135,6 +150,8 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.scan.sample_limit = args.limit
     if args.strategy:
         config.scan.sample_strategy = args.strategy
+    if args.progress:
+        config.scan.progress = args.progress
     if args.dry_run:
         config.scan.dry_run = True
     if args.no_ner:

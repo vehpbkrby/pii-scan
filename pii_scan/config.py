@@ -81,6 +81,7 @@ class ScanOptions:
     group_samples: int = 2                # сколько представителей обследовать
     ner: bool = True
     ner_values_per_column: int = 50   # бюджет NER: инференс дорогой
+    progress: str = "auto"           # индикатор: auto | on | off
     examples_per_hit: int = 3
     allow_rw: bool = False           # разрешить учётку с правами на запись
     dry_run: bool = False            # только схема, ни одного чтения данных
@@ -162,6 +163,9 @@ def load_config(path: str) -> AppConfig:
     if unknown:
         raise ConfigError(f"неизвестные параметры в scan: {', '.join(sorted(unknown))}")
     scan = ScanOptions(**scan_raw)
+    if scan.progress not in ("auto", "on", "off"):
+        raise ConfigError(
+            f"progress: '{scan.progress}' — допустимо auto, on, off")
     if scan.sample_strategy not in SAMPLE_STRATEGIES:
         raise ConfigError(
             f"sample_strategy: '{scan.sample_strategy}' — допустимо "

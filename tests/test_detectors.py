@@ -122,6 +122,17 @@ def test_detect_in_column_name():
     assert detect_in_column_name("order_total") == set()
 
 
+def test_underscore_is_a_word_separator():
+    """client_fio, user_inn, ip_addr — подчёркивание не должно мешать."""
+    assert "fio" in detect_in_column_name("client_fio")
+    assert "fio" in detect_in_column_name("FIO_CLIENT")
+    assert "inn" in detect_in_column_name("user_inn")
+    assert "snils" in detect_in_column_name("employee_snils_number")
+    # и привычные слитные написания по-прежнему работают
+    assert "name_part" in detect_in_column_name("lastname")
+    assert "name_part" in detect_in_column_name("last_name")
+
+
 def test_column_comment_is_used():
     assert "passport_rf" in detect_in_column_name("f_17", "Серия и номер паспорта")
 

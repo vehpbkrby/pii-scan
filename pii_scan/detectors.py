@@ -209,9 +209,18 @@ class Detector:
         return False
 
     def matches_name(self, name: str, comment: str = "") -> bool:
+        """Ищет по имени поля и комментарию к нему.
+
+        Имя проверяется в двух видах — как есть и с подчёркиваниями,
+        заменёнными на пробелы. Иначе `\\bfio\\b` не сработает на `client_fio`:
+        для регулярных выражений подчёркивание — символ слова, и границы
+        слова там нет. А это самое обычное именование полей.
+        """
         if self.name_re is None:
             return False
-        return bool(self.name_re.search(f"{name} {comment}".lower()))
+        low = name.lower()
+        haystack = f"{low} {low.replace('_', ' ')} {comment.lower()}"
+        return bool(self.name_re.search(haystack))
 
 
 def _n(pattern: str) -> Pattern:
