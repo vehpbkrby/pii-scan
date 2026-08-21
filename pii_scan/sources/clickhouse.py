@@ -58,12 +58,17 @@ class ClickHouseSource(Source):
         }
         try:
             import clickhouse_connect
+            tls = {}
+            if cfg.secure:
+                tls["verify"] = cfg.ssl_verify
+                if cfg.ssl_ca:
+                    tls["ca_cert"] = cfg.ssl_ca
             self._conn = clickhouse_connect.get_client(
                 host=cfg.host, port=cfg.port, username=cfg.user,
                 password=cfg.password, secure=cfg.secure,
                 connect_timeout=max(self.options.query_timeout, 5),
                 send_receive_timeout=self.options.query_timeout * 4,
-                settings=settings,
+                settings=settings, **tls,
             )
             self._driver = "clickhouse-connect"
         except ImportError:
@@ -79,6 +84,7 @@ class ClickHouseSource(Source):
                 host=cfg.host, port=port, user=cfg.user, password=cfg.password,
                 secure=cfg.secure, settings=settings,
                 connect_timeout=max(self.options.query_timeout, 5),
+                verify=cfg.ssl_verify, ca_certs=cfg.ssl_ca or None,
             )
             self._driver = "clickhouse-driver"
         log.info("[%s] подключение к ClickHouse %s:%s установлено (%s)",

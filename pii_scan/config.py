@@ -77,7 +77,9 @@ class SourceConfig:
     port: int
     user: str
     password: str = ""
-    secure: bool = False                              # ClickHouse: HTTPS
+    secure: bool = False              # TLS: HTTPS для ClickHouse, SSL для MySQL
+    ssl_ca: str = ""                  # путь к корневому сертификату внутри контейнера
+    ssl_verify: bool = True           # проверять сертификат сервера
     databases: List[str] = field(default_factory=list)        # пусто = все
     exclude_databases: List[str] = field(default_factory=list)
     include_tables: List[str] = field(default_factory=list)   # regex

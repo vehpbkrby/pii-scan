@@ -23,6 +23,9 @@ sources:
     port: 3306
     user: pii_reader
     password: ${MYSQL_PWD}
+    secure: false                 # true — соединяться по TLS
+    # ssl_ca: /config/ca.pem      # корневой сертификат (путь внутри контейнера)
+    # ssl_verify: true            # false — не проверять сертификат сервера
     databases: []                 # пусто = все, кроме системных
     exclude_databases: []
     include_tables: []            # regex; пусто = все
@@ -37,7 +40,9 @@ sources:
     port: 8123                    # HTTP; для clickhouse-driver будет 9000
     user: pii_reader
     password: ${CH_PWD}
-    secure: false
+    secure: false                 # true — HTTPS (порт обычно 8443)
+    # ssl_ca: /config/ca.pem
+    # ssl_verify: true
     databases: []
     exclude_tables:
       - '^\.inner'

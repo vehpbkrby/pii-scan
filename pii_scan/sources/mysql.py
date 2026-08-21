@@ -51,10 +51,19 @@ class MySQLSource(Source):
         timeout = max(self.options.query_timeout, 5)
         try:
             import pymysql
+            ssl_args = {}
+            if cfg.secure:
+                ssl_conf = {}
+                if cfg.ssl_ca:
+                    ssl_conf["ca"] = cfg.ssl_ca
+                if not cfg.ssl_verify:
+                    ssl_conf["check_hostname"] = False
+                    ssl_conf["verify_mode"] = False
+                ssl_args["ssl"] = ssl_conf
             self._conn = pymysql.connect(
                 host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password,
                 charset="utf8mb4", connect_timeout=timeout, read_timeout=timeout * 4,
-                autocommit=True,
+                autocommit=True, **ssl_args,
             )
             self._driver = "pymysql"
         except ImportError:
@@ -68,6 +77,9 @@ class MySQLSource(Source):
             self._conn = mysql_connector.connect(
                 host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password,
                 charset="utf8mb4", connection_timeout=timeout, autocommit=True,
+                ssl_disabled=not cfg.secure,
+                ssl_ca=cfg.ssl_ca or None,
+                ssl_verify_cert=cfg.secure and cfg.ssl_verify,
             )
             self._driver = "mysql-connector"
         self._apply_timeout()
