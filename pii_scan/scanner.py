@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from copy import deepcopy
+from dataclasses import replace
 from typing import Dict, List, Optional, Sequence
 
 from . import jsonwalk
@@ -25,6 +27,8 @@ from .detectors import (
 )
 from .model import ColumnRef, Finding, ScanResult, TableStat
 from .nlp import NerTagger
+from .pacing import Pacer
+from .planning import Plan, build_plan
 from .sources.base import (
     ColumnInfo, ReadWriteAccessError, Sample, Source, SourceError, TableInfo,
     build_source,
@@ -38,6 +42,7 @@ class Scanner:
         self.config = config
         self.options: ScanOptions = config.scan
         self.ner = NerTagger(enabled=self.options.ner and not self.options.dry_run)
+        self.pacer = Pacer(config.throttle)
         self.result = ScanResult()
 
     # --- точка входа ------------------------------------------------------
@@ -52,6 +57,9 @@ class Scanner:
             "scan_json": self.options.scan_json,
             "ner": self.options.ner,
             "allow_rw": self.options.allow_rw,
+            "pause_ms": self.config.throttle.pause_ms,
+            "max_queries_per_minute": self.config.throttle.max_queries_per_minute,
+            "max_duration_min": self.config.throttle.max_duration_min,
         }
 
         for src_cfg in self.config.sources:
@@ -73,7 +81,7 @@ class Scanner:
     # --- источник ---------------------------------------------------------
 
     def _scan_source(self, src_cfg) -> None:
-        source: Source = build_source(src_cfg, self.options)
+        source: Source = build_source(src_cfg, self.options, self.pacer)
         log.info("Источник '%s' (%s): подключение…", src_cfg.name, src_cfg.type)
         with source:
             privs = source.check_access()
@@ -84,35 +92,118 @@ class Scanner:
                 )
 
             tables = source.filtered_tables()
-            log.info("Источник '%s': к сканированию %d таблиц",
-                     src_cfg.name, len(tables))
+            columns_map = source.list_columns(tables)
+            plan = build_plan(
+                tables, columns_map,
+                group_similar=self.options.group_similar_tables,
+                group_min_size=self.options.group_min_size,
+                group_samples=self.options.group_samples,
+            )
+            targets = plan.to_scan
+            log.info("Источник '%s': таблиц %d, к обследованию %d%s",
+                     src_cfg.name, len(tables), len(targets),
+                     f", по образцу {len(plan.inferred_items)}"
+                     if plan.inferred_items else "")
+            if plan.groups:
+                self._note_groups(src_cfg.name, plan)
+
             self.result.sources.append({
                 "name": src_cfg.name,
                 "type": src_cfg.type,
                 "host": f"{src_cfg.host}:{src_cfg.port}",
                 "user": src_cfg.user,
                 "tables": len(tables),
+                "scanned": len(targets),
+                "inferred": len(plan.inferred_items),
                 "read_only": not privs,
             })
 
-            columns_map = source.list_columns(tables)
-            for i, table in enumerate(tables, 1):
-                columns = columns_map.get(table.qualified, [])
-                if not columns:
-                    continue
-                log.info("[%s] (%d/%d) %s — %d колонок",
-                         src_cfg.name, i, len(tables), table.qualified, len(columns))
+            scanned: Dict[str, TableStat] = {}
+            for i, item in enumerate(targets, 1):
+                if self.pacer.expired():
+                    self._warn(
+                        f"[{src_cfg.name}] прогон остановлен по бюджету времени: "
+                        f"обследовано {i - 1} таблиц из {len(targets)}. "
+                        f"Увеличьте throttle.max_duration_min или сузьте охват."
+                    )
+                    break
+                self._progress(src_cfg.name, i, len(targets), item.table)
                 try:
-                    stat = self._scan_table(source, table, columns)
+                    stat = self._scan_table(source, item.table, item.columns)
                 except Exception as exc:  # noqa: BLE001
-                    self._error(f"[{src_cfg.name}] {table.qualified}: {exc}")
+                    self._error(f"[{src_cfg.name}] {item.table.qualified}: {exc}")
                     continue
+                scanned[item.table.qualified] = stat
                 if stat.findings:
                     self.result.tables.append(stat)
+
+            for item in plan.inferred_items:
+                origins = [
+                    scanned[q]
+                    for q in plan.representatives.get(item.representative,
+                                                      [item.representative])
+                    if q in scanned and scanned[q].findings
+                ]
+                if not origins:
+                    continue
+                self.result.tables.append(self._inherit(item, origins))
 
             for message in source.warnings:
                 if message not in self.result.warnings:
                     self.result.warnings.append(message)
+            log.info("Источник '%s' обследован (%s)",
+                     src_cfg.name, self.pacer.summary())
+
+    def _note_groups(self, source_name: str, plan: Plan) -> None:
+        total = sum(len(members) for members in plan.groups.values())
+        message = (
+            f"[{source_name}] однотипных таблиц: {total} в "
+            f"{len(plan.groups)} группах — обследованы образцы, остальные "
+            f"наследуют результат (см. пометку «по образцу» в отчёте)"
+        )
+        log.info(message)
+        self.result.warnings.append(message)
+
+    def _inherit(self, item, origins: List[TableStat]) -> TableStat:
+        """Переносит на однотипную таблицу объединённые находки образцов.
+
+        Образцов может быть несколько: в одной месячной партиции поле бывает
+        заполнено, а в другой пусто, — берём лучшее свидетельство по каждому
+        полю, иначе второй обследованный образец не давал бы ничего.
+        """
+        stat = TableStat(
+            source=origins[0].source, database=item.table.database,
+            table=item.table.name, rows_total=item.table.rows,
+            columns_total=len(item.columns),
+            inferred_from=item.representative,
+        )
+        best: Dict[str, Finding] = {}
+        for origin in origins:
+            for source_finding in origin.findings:
+                key = source_finding.ref.full_column
+                current = best.get(key)
+                if current is None or source_finding.score > current.score:
+                    best[key] = source_finding
+
+        for source_finding in best.values():
+            ref = replace(source_finding.ref, table=item.table.name,
+                          database=item.table.database)
+            clone = Finding(
+                ref=ref, rows_total=item.table.rows,
+                sampled=source_finding.sampled, non_null=source_finding.non_null,
+                hits=deepcopy(source_finding.hits),
+                inferred_from=item.representative,
+            )
+            clone.compute_scores()
+            stat.findings.append(clone)
+        stat.findings.sort(key=lambda f: (-f.score, f.ref.full_column))
+        return stat
+
+    def _progress(self, source_name: str, done: int, total: int,
+                  table: TableInfo) -> None:
+        eta = self.pacer.eta(done - 1, total)
+        log.info("[%s] (%d/%d) %s%s", source_name, done, total,
+                 table.qualified, f" — {eta}" if eta else "")
 
     # --- таблица ----------------------------------------------------------
 

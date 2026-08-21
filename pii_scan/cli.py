@@ -52,6 +52,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="отключить NER по свободному тексту")
     parser.add_argument("--no-json", action="store_true",
                         help="не разбирать JSON внутри значений")
+    throttle = parser.add_argument_group("ограничение нагрузки")
+    throttle.add_argument("--pause-ms", type=int, metavar="МС",
+                          help="пауза между запросами к БД")
+    throttle.add_argument("--max-qpm", type=int, metavar="N",
+                          help="не больше N запросов в минуту")
+    throttle.add_argument("--max-minutes", type=int, metavar="МИН",
+                          help="бюджет времени: по исчерпании прогон корректно "
+                               "завершается и сохраняет найденное")
+    throttle.add_argument("--no-grouping", action="store_true",
+                          help="не наследовать результат на однотипные "
+                               "таблицы (шарды, помесячные партиции)")
+
     parser.add_argument("--allow-rw", action="store_true",
                         help="разрешить работу под учётной записью с правами "
                              "на запись (по умолчанию запуск блокируется)")
@@ -128,6 +140,14 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.scan.allow_rw = True
     if args.show_values:
         config.scan.show_values = True
+    if args.pause_ms is not None:
+        config.throttle.pause_ms = args.pause_ms
+    if args.max_qpm is not None:
+        config.throttle.max_queries_per_minute = args.max_qpm
+    if args.max_minutes is not None:
+        config.throttle.max_duration_min = args.max_minutes
+    if args.no_grouping:
+        config.scan.group_similar_tables = False
     if args.only:
         wanted = set(args.only)
         known = {s.name for s in config.sources}
@@ -193,6 +213,12 @@ def main(argv: List[str] | None = None) -> int:
 
     log.info("Конфиг: %s | источников: %d | режим: %s", path, len(config.sources),
              "инвентаризация схемы" if config.scan.dry_run else "выборка значений")
+    throttle = config.throttle
+    if throttle.pause_ms or throttle.max_queries_per_minute or             throttle.max_duration_min:
+        log.info("Ограничение нагрузки: пауза %d мс | не более %s запр./мин | "
+                 "бюджет %s мин", throttle.pause_ms,
+                 throttle.max_queries_per_minute or "∞",
+                 throttle.max_duration_min or "∞")
 
     try:
         result = Scanner(config).run()

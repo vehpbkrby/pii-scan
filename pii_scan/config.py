@@ -53,6 +53,14 @@ def _expand(value: Any) -> Any:
 
 
 @dataclass
+class ThrottleOptions:
+    """Ограничение нагрузки. По умолчанию не ограничивает ничего."""
+    pause_ms: int = 0                 # пауза между запросами
+    max_queries_per_minute: int = 0   # 0 = без ограничения
+    max_duration_min: int = 0         # общий бюджет времени прогона
+
+
+@dataclass
 class ScanOptions:
     sample_limit: int = 500          # строк на таблицу
     max_value_len: int = 512         # обрезка значений на стороне БД
@@ -61,6 +69,10 @@ class ScanOptions:
     max_threads: int = 2             # ограничение нагрузки (ClickHouse)
     scan_json: bool = True
     max_json_paths: int = 200        # виртуальных колонок на одну JSON-колонку
+    max_bytes_per_table: int = 2_000_000  # потолок трафика на таблицу
+    group_similar_tables: bool = True     # шардированные таблицы — по образцу
+    group_min_size: int = 4               # с какого размера группы включается
+    group_samples: int = 2                # сколько представителей обследовать
     ner: bool = True
     ner_values_per_column: int = 50   # бюджет NER: инференс дорогой
     examples_per_hit: int = 3
@@ -86,6 +98,7 @@ class SourceConfig:
     exclude_tables: List[str] = field(default_factory=list)   # regex
     skip_views: bool = True
     skip_engines: List[str] = field(default_factory=list)     # ClickHouse
+    settings: Dict[str, Any] = field(default_factory=dict)    # настройки сессии
 
     def __post_init__(self) -> None:
         self.exclude_databases = list(
@@ -114,6 +127,7 @@ class SourceConfig:
 class AppConfig:
     scan: ScanOptions
     sources: List[SourceConfig]
+    throttle: ThrottleOptions = field(default_factory=ThrottleOptions)
 
 
 def _load_raw(path: str) -> Dict[str, Any]:
@@ -142,6 +156,13 @@ def load_config(path: str) -> AppConfig:
     if unknown:
         raise ConfigError(f"неизвестные параметры в scan: {', '.join(sorted(unknown))}")
     scan = ScanOptions(**scan_raw)
+
+    throttle_raw = raw.get("throttle") or {}
+    unknown = set(throttle_raw) - set(ThrottleOptions().__dict__)
+    if unknown:
+        raise ConfigError(
+            f"неизвестные параметры в throttle: {', '.join(sorted(unknown))}")
+    throttle = ThrottleOptions(**throttle_raw)
 
     sources_raw = raw.get("sources")
     if not sources_raw:
@@ -180,7 +201,7 @@ def load_config(path: str) -> AppConfig:
     if dupes:
         raise ConfigError(f"повторяющиеся имена источников: {', '.join(sorted(dupes))}")
 
-    return AppConfig(scan=scan, sources=sources)
+    return AppConfig(scan=scan, sources=sources, throttle=throttle)
 
 
 def find_default_config(candidates: Optional[List[str]] = None) -> Optional[str]:

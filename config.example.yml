@@ -10,11 +10,21 @@ scan:
   max_threads: 2              # ограничение нагрузки (ClickHouse)
   scan_json: true             # разбирать JSON внутри значений
   max_json_paths: 200         # виртуальных колонок на одну JSON-колонку
+  max_bytes_per_table: 2000000  # потолок трафика на таблицу (широкие читаются мельче)
+  group_similar_tables: true    # шардированные и партиционированные — по образцу
+  group_min_size: 4             # с какого размера группы включается
+  group_samples: 2              # сколько представителей обследовать
   ner: true                   # NER по свободному русскому тексту
   ner_values_per_column: 50   # бюджет NER на колонку
   examples_per_hit: 3         # замаскированных примеров в отчёте
   allow_rw: false             # true — разрешить учётку с правами на запись
   show_values: false          # true — НЕ маскировать значения (осторожно!)
+
+# Ограничение нагрузки. По умолчанию не ограничивает ничего.
+throttle:
+  pause_ms: 0                 # пауза между запросами к БД
+  max_queries_per_minute: 0   # 0 = без ограничения
+  max_duration_min: 0         # бюджет времени, 0 = без ограничения
 
 sources:
   - name: prod-mysql
@@ -33,6 +43,8 @@ sources:
       - '_archive$'
       - '^tmp_'
     skip_views: true
+    # settings:                 # переменные сессии MySQL
+    #   max_execution_time: 5000
 
   - name: prod-clickhouse
     type: clickhouse
@@ -50,3 +62,7 @@ sources:
     # попадут в отчёт по нескольку раз. Чтобы сканировать их — задайте
     # пустой список.
     skip_engines: [Distributed, Merge, Null, View, MaterializedView]
+    # settings:                 # родные ограничители ClickHouse
+    #   max_bytes_to_read: 100000000
+    #   max_execution_speed_bytes: 20000000
+    #   priority: 10

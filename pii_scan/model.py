@@ -70,6 +70,7 @@ class Finding:
     hits: Dict[str, Hit] = field(default_factory=dict)
     scores: Dict[str, float] = field(default_factory=dict)
     dry_run: bool = False       # данные не читались — «пусто» ≠ «не смотрели»
+    inferred_from: Optional[str] = None  # результат образца однотипной таблицы
 
     def hit(self, code: str) -> Hit:
         if code not in self.hits:
@@ -170,6 +171,8 @@ class Finding:
     @property
     def basis(self) -> str:
         """Основание вывода — для колонки «Основание» в реестре."""
+        if self.inferred_from:
+            return f"по образцу {self.inferred_from}"
         parts = []
         codes = set(self.codes)
         if any(self.hits[c].by_name for c in codes if c in self.hits):
@@ -191,6 +194,7 @@ class TableStat:
     findings: List[Finding] = field(default_factory=list)
     columns_total: int = 0
     rows_sampled: int = 0
+    inferred_from: Optional[str] = None   # обследован образец однотипной таблицы
 
     @property
     def qualified(self) -> str:

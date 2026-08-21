@@ -93,7 +93,7 @@ def app_config():
 def run(monkeypatch, app_config, write_privs=None):
     monkeypatch.setattr(
         scanner_module, "build_source",
-        lambda cfg, opts: FakeSource(cfg, opts, write_privs),
+        lambda cfg, opts, pacer=None: FakeSource(cfg, opts, write_privs),
     )
     return Scanner(app_config).run()
 

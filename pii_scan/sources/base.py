@@ -83,11 +83,14 @@ class Source(ABC):
 
     type: str = ""
 
-    def __init__(self, config: SourceConfig, options: ScanOptions) -> None:
+    def __init__(self, config: SourceConfig, options: ScanOptions,
+                 pacer: Optional["Pacer"] = None) -> None:
         self.config = config
         self.options = options
         self._conn = None
         self.warnings: List[str] = []   # собираются сканером в отчёт
+        from ..pacing import Pacer as _Pacer
+        self.pacer = pacer or _Pacer()
 
     @property
     def name(self) -> str:
@@ -164,12 +167,32 @@ class Source(ABC):
     def chunked(items: Sequence, size: int) -> List[Sequence]:
         return [items[i:i + size] for i in range(0, len(items), size)]
 
+    def effective_limit(self, columns: Sequence[ColumnInfo]) -> int:
+        """Сколько строк читать с учётом ширины таблицы.
 
-def build_source(config: SourceConfig, options: ScanOptions) -> Source:
+        У таблицы на 300 колонок выборка в 500 строк — это десятки мегабайт
+        по сети на каждую таблицу. Ограничиваем трафик, а не число строк:
+        оценка среднего значения берётся как восьмая часть от потолка длины
+        (max_value_len), значения в жизни куда короче своего максимума.
+        """
+        limit = int(self.options.sample_limit)
+        budget = int(self.options.max_bytes_per_table)
+        if budget <= 0 or not columns:
+            return limit
+        per_row = max(1, len(columns) * max(8, self.options.max_value_len // 8))
+        allowed = max(50, budget // per_row)
+        if allowed < limit:
+            log.debug("[%s] выборка уменьшена до %d строк (%d колонок)",
+                      self.name, allowed, len(columns))
+        return min(limit, allowed)
+
+
+def build_source(config: SourceConfig, options: ScanOptions,
+                 pacer=None) -> Source:
     if config.type == "mysql":
         from .mysql import MySQLSource
-        return MySQLSource(config, options)
+        return MySQLSource(config, options, pacer)
     if config.type == "clickhouse":
         from .clickhouse import ClickHouseSource
-        return ClickHouseSource(config, options)
+        return ClickHouseSource(config, options, pacer)
     raise SourceError(f"неизвестный тип источника: {config.type}")

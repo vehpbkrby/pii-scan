@@ -52,8 +52,8 @@ def _lit(value: str) -> str:
 class ClickHouseSource(Source):
     type = "clickhouse"
 
-    def __init__(self, config, options) -> None:
-        super().__init__(config, options)
+    def __init__(self, config, options, pacer=None) -> None:
+        super().__init__(config, options, pacer)
         self._driver = ""
 
     # --- жизненный цикл ---------------------------------------------------
@@ -64,6 +64,9 @@ class ClickHouseSource(Source):
             "max_execution_time": int(self.options.query_timeout),
             "max_threads": int(self.options.max_threads),
         }
+        # Родные ограничители ClickHouse: max_bytes_to_read,
+        # max_execution_speed_bytes, max_memory_usage, priority и прочее
+        settings.update(self.config.settings or {})
         try:
             import clickhouse_connect
             tls = {}
@@ -107,6 +110,7 @@ class ClickHouseSource(Source):
             self._conn = None
 
     def _query(self, sql: str) -> List[tuple]:
+        self.pacer.before_query()
         if self._driver == "clickhouse-connect":
             return [tuple(row) for row in self._conn.query(sql).result_rows]
         return [tuple(row) for row in self._conn.execute(sql)]
@@ -190,7 +194,7 @@ class ClickHouseSource(Source):
         if not target:
             return result
 
-        limit = int(self.options.sample_limit)
+        limit = self.effective_limit(target)
         maxlen = int(self.options.max_value_len)
         qualified = f"{_quote(table.database)}.{_quote(table.name)}"
 

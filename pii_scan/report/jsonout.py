@@ -27,6 +27,7 @@ def finding_to_dict(finding: Finding) -> Dict[str, Any]:
         "categories": finding.categories,
         "third_party": finding.third_party,
         "basis": finding.basis,
+        "inferred_from": finding.inferred_from,
         "detectors": [
             {
                 "code": code,
@@ -50,6 +51,7 @@ def table_to_dict(table: TableStat) -> Dict[str, Any]:
         "table": table.table,
         "rows_total": table.rows_total,
         "rows_sampled": table.rows_sampled,
+        "inferred_from": table.inferred_from,
         "columns_total": table.columns_total,
         "categories": table.categories,
         "has_special": table.has_special,

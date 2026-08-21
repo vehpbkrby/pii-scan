@@ -91,6 +91,7 @@ class MySQLSource(Source):
             )
             self._driver = "mysql-connector"
         self._apply_timeout()
+        self._apply_session_settings()
         log.info("[%s] подключение к MySQL %s:%s установлено (%s)",
                  self.name, cfg.host, cfg.port, self._driver)
 
@@ -106,6 +107,16 @@ class MySQLSource(Source):
         log.debug("[%s] таймаут запроса на стороне сервера не поддерживается",
                   self.name)
 
+    def _apply_session_settings(self) -> None:
+        """Произвольные переменные сессии из конфига источника."""
+        for name, value in (self.config.settings or {}).items():
+            literal = value if isinstance(value, (int, float)) else f"'{value}'"
+            try:
+                self._execute(f"SET SESSION {name} = {literal}")
+            except Exception as exc:  # noqa: BLE001
+                self.warnings.append(
+                    f"[{self.name}] не удалось задать {name}={value}: {exc}")
+
     def close(self) -> None:
         if self._conn is not None:
             try:
@@ -117,6 +128,7 @@ class MySQLSource(Source):
     # --- низкий уровень ---------------------------------------------------
 
     def _execute(self, sql: str, params=None) -> List[tuple]:
+        self.pacer.before_query()
         cur = self._conn.cursor()
         try:
             cur.execute(sql, params or ())
@@ -188,7 +200,7 @@ class MySQLSource(Source):
         if not target:
             return result
 
-        limit = int(self.options.sample_limit)
+        limit = self.effective_limit(target)
         maxlen = int(self.options.max_value_len)
         qualified = f"{_quote(table.database)}.{_quote(table.name)}"
 
