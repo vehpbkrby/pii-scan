@@ -69,7 +69,12 @@ class MySQLSource(Source):
                     ssl_conf["verify_mode"] = False
                 ssl_args["ssl"] = ssl_conf
             self._conn = pymysql.connect(
-                host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password,
+                host=cfg.host, port=cfg.port, user=cfg.user,
+                # PyMySQL кодирует строковый пароль в latin-1 и падает на
+                # кириллице ошибкой кодека вместо внятного отказа в доступе.
+                # Передаём байты сами: для ASCII разницы нет, для остального
+                # UTF-8 — то, что и отправит любой современный клиент.
+                password=cfg.password.encode("utf-8") if cfg.password else "",
                 charset="utf8mb4", connect_timeout=timeout, read_timeout=timeout * 4,
                 autocommit=True, **ssl_args,
             )

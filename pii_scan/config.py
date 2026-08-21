@@ -138,17 +138,36 @@ class AppConfig:
 
 
 def _load_raw(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as fh:
-        text = fh.read()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError as exc:
+        raise ConfigError(
+            f"конфиг не найден: {path}. Проверьте путь; в контейнере файл "
+            f"монтируется как /config/config.yml"
+        ) from exc
+    except OSError as exc:
+        raise ConfigError(f"не удалось прочитать конфиг {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(
+            f"конфиг {path} не в кодировке UTF-8: {exc}") from exc
+
     if path.endswith((".yml", ".yaml")):
         try:
             import yaml
         except ImportError as exc:  # pragma: no cover
             raise ConfigError("для YAML-конфига нужен PyYAML") from exc
-        data = yaml.safe_load(text)
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"конфиг {path} — некорректный YAML: {exc}") from exc
     else:
         import json
-        data = json.loads(text)
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise ConfigError(f"конфиг {path} — некорректный JSON: {exc}") from exc
+
     if not isinstance(data, dict):
         raise ConfigError("конфиг должен быть объектом верхнего уровня")
     return data
