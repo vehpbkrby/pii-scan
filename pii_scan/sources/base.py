@@ -56,6 +56,7 @@ class TableInfo:
     rows: Optional[int] = None      # оценка, COUNT(*) никогда не выполняется
     engine: str = ""
     is_view: bool = False
+    order_key: str = ""    # колонка для чтения «с конца» (PK / ключ сортировки)
 
     @property
     def qualified(self) -> str:
@@ -166,6 +167,22 @@ class Source(ABC):
     @staticmethod
     def chunked(items: Sequence, size: int) -> List[Sequence]:
         return [items[i:i + size] for i in range(0, len(items), size)]
+
+    def sample_parts(self, limit: int, has_order_key: bool) -> List[tuple]:
+        """Разбивает выборку на части: [(сколько строк, читать ли с конца)].
+
+        Чтение только «головы» таблицы — систематическая слепая зона: поле,
+        которое начали заполнять недавно, в старых строках пусто, и сканер
+        объявит его чистым. Поэтому по умолчанию половина выборки берётся
+        с конца, по ключу сортировки.
+        """
+        strategy = getattr(self.options, "sample_strategy", "head")
+        if strategy == "head" or not has_order_key:
+            return [(limit, False)]
+        if strategy == "tail":
+            return [(limit, True)]
+        head = max(1, limit // 2)
+        return [(head, False), (limit - head, True)]
 
     def effective_limit(self, columns: Sequence[ColumnInfo]) -> int:
         """Сколько строк читать с учётом ширины таблицы.

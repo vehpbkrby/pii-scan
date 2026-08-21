@@ -53,6 +53,7 @@ class Scanner:
             timespec="seconds")
         self.result.options = {
             "sample_limit": self.options.sample_limit,
+            "sample_strategy": self.options.sample_strategy,
             "dry_run": self.options.dry_run,
             "scan_json": self.options.scan_json,
             "ner": self.options.ner,
@@ -247,20 +248,18 @@ class Scanner:
                 continue
             finding.sampled = len(values)
             finding.non_null = len(values)
-            ner_budget = self.options.ner_values_per_column
+            ner_targets = self._ner_targets(values)
             ner_examined = 0
             json_paths: Dict[str, Finding] = {}
 
-            for value in values:
+            for position, value in enumerate(values):
                 for code in detect_in_value(value):
                     hit = finding.hit(code)
                     hit.matched += 1
                     hit.add_example(self._example(value),
                                     self.options.examples_per_hit)
 
-                if self.ner.available and ner_budget > 0 and \
-                        self.ner.is_free_text(value):
-                    ner_budget -= 1
+                if position in ner_targets:
                     ner_examined += 1
                     for code in self.ner.analyze(value):
                         hit = finding.hit(code)
@@ -279,6 +278,24 @@ class Scanner:
             for virtual in json_paths.values():
                 virtual.compute_scores()
                 findings[virtual.ref.full_column] = virtual
+
+    def _ner_targets(self, values: List[str]) -> set:
+        """Какие значения отдать в NER, равномерно по всей выборке.
+
+        Раньше брались первые N свободнотекстовых значений. С выборкой
+        «пополам с обоих концов» это означало, что весь бюджет уходил на
+        начало таблицы, а свежие записи модель не видела вовсе.
+        """
+        if not self.ner.available:
+            return set()
+        budget = int(self.options.ner_values_per_column)
+        if budget <= 0:
+            return set()
+        candidates = [i for i, v in enumerate(values) if self.ner.is_free_text(v)]
+        if len(candidates) <= budget:
+            return set(candidates)
+        step = len(candidates) / budget
+        return {candidates[int(i * step)] for i in range(budget)}
 
     def _analyze_json(self, source: Source, table: TableInfo, parent: Finding,
                       value: str, json_paths: Dict[str, Finding]) -> None:

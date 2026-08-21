@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 SUPPORTED_TYPES = ("mysql", "clickhouse")
+SAMPLE_STRATEGIES = ("head", "tail", "head_tail")
 
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
@@ -63,6 +64,11 @@ class ThrottleOptions:
 @dataclass
 class ScanOptions:
     sample_limit: int = 500          # строк на таблицу
+    # head      — первые строки (самые старые), один запрос;
+    # tail      — последние строки (самые свежие);
+    # head_tail — пополам с обоих концов: ПДн часто появляются в новых
+    #             записях, и чтение только «головы» их не видит.
+    sample_strategy: str = "head_tail"
     max_value_len: int = 512         # обрезка значений на стороне БД
     query_timeout: int = 15          # секунд на запрос
     max_columns_per_query: int = 60  # колонок в одной выборке
@@ -156,6 +162,10 @@ def load_config(path: str) -> AppConfig:
     if unknown:
         raise ConfigError(f"неизвестные параметры в scan: {', '.join(sorted(unknown))}")
     scan = ScanOptions(**scan_raw)
+    if scan.sample_strategy not in SAMPLE_STRATEGIES:
+        raise ConfigError(
+            f"sample_strategy: '{scan.sample_strategy}' — допустимо "
+            f"{', '.join(SAMPLE_STRATEGIES)}")
 
     throttle_raw = raw.get("throttle") or {}
     unknown = set(throttle_raw) - set(ThrottleOptions().__dict__)

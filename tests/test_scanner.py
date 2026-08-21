@@ -188,3 +188,33 @@ def test_allow_rw_permits_scan(monkeypatch, app_config):
     result = run(monkeypatch, app_config, write_privs=["INSERT"])
     assert result.warnings
     assert result.tables
+
+
+def test_ner_budget_is_spread_over_whole_sample(monkeypatch, app_config):
+    """Бюджет NER не должен целиком уходить на начало выборки."""
+    app_config.scan.ner = True
+    app_config.scan.ner_values_per_column = 4
+    from pii_scan.scanner import Scanner
+
+    seen = []
+
+    class FakeNer:
+        available = True
+        @staticmethod
+        def is_free_text(value):
+            return True
+        def analyze(self, text):
+            seen.append(text)
+            return set()
+
+    monkeypatch.setattr(
+        scanner_module, "build_source",
+        lambda cfg, opts, pacer=None: FakeSource(cfg, opts, None),
+    )
+    scanner = Scanner(app_config)
+    scanner.ner = FakeNer()
+    values = [f"значение номер {i}" for i in range(100)]
+    targets = scanner._ner_targets(values)
+    assert len(targets) == 4
+    # берутся из разных частей выборки, а не первые четыре подряд
+    assert max(targets) >= 50

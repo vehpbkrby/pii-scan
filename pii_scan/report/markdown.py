@@ -43,8 +43,13 @@ def _header(result: ScanResult, title: str) -> List[str]:
         f"* Режим: {mode}",
     ]
     if not result.options.get("dry_run"):
+        strategy = {
+            "head": "начало таблицы",
+            "tail": "конец таблицы",
+            "head_tail": "пополам с начала и с конца",
+        }.get(result.options.get("sample_strategy"), "начало таблицы")
         lines.append(f"* Строк выборки на таблицу: "
-                     f"{result.options.get('sample_limit')}")
+                     f"{result.options.get('sample_limit')} ({strategy})")
         lines.append(f"* Разбор JSON: "
                      f"{'да' if result.options.get('scan_json') else 'нет'}; "
                      f"NER по тексту: "

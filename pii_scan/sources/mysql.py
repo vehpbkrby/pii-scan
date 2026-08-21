@@ -155,15 +155,37 @@ class MySQLSource(Source):
             "WHERE TABLE_SCHEMA NOT IN "
             "('mysql','information_schema','performance_schema','sys')"
         )
+        keys = self._primary_keys()
         return [
             TableInfo(
                 database=db, name=name,
                 rows=int(rows_est) if rows_est is not None else None,
                 engine=engine or "",
                 is_view=(ttype or "").upper() == "VIEW",
+                order_key=keys.get(f"{db}.{name}", ""),
             )
             for db, name, rows_est, ttype, engine in rows
         ]
+
+    def _primary_keys(self) -> Dict[str, str]:
+        """Первая колонка первичного ключа — по ней читаем «хвост» таблицы.
+
+        Чтение по индексу, поэтому ORDER BY ... DESC LIMIT n остаётся дешёвым
+        даже на больших таблицах.
+        """
+        try:
+            rows = self._execute(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME "
+                "FROM information_schema.STATISTICS "
+                "WHERE INDEX_NAME = 'PRIMARY' AND SEQ_IN_INDEX = 1 "
+                "AND TABLE_SCHEMA NOT IN "
+                "('mysql','information_schema','performance_schema','sys')"
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[%s] не удалось получить первичные ключи: %s",
+                      self.name, exc)
+            return {}
+        return {f"{db}.{table}": column for db, table, column in rows}
 
     def list_columns(self, tables: Sequence[TableInfo]) -> Dict[str, List[ColumnInfo]]:
         if not tables:
@@ -204,17 +226,24 @@ class MySQLSource(Source):
         maxlen = int(self.options.max_value_len)
         qualified = f"{_quote(table.database)}.{_quote(table.name)}"
 
+        parts = self.sample_parts(limit, bool(table.order_key))
         for chunk in self.chunked(target, self.options.max_columns_per_query):
             select = ", ".join(
                 f"LEFT(CAST({_quote(c.name)} AS CHAR), {maxlen}) AS c{i}"
                 for i, c in enumerate(chunk)
             )
-            sql = f"SELECT {select} FROM {qualified} LIMIT {limit}"
-            try:
-                rows = self._execute(sql)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("[%s] %s: выборка не удалась (%s)",
-                            self.name, table.qualified, exc)
+            rows = []
+            for part_limit, from_tail in parts:
+                sql = f"SELECT {select} FROM {qualified}"
+                if from_tail:
+                    sql += f" ORDER BY {_quote(table.order_key)} DESC"
+                sql += f" LIMIT {part_limit}"
+                try:
+                    rows.extend(self._execute(sql))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("[%s] %s: выборка не удалась (%s)",
+                                self.name, table.qualified, exc)
+            if not rows:
                 continue
             result.rows_read = max(result.rows_read, len(rows))
             for idx, col in enumerate(chunk):

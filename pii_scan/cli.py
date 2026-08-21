@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="только инвентаризация схемы, значения не читаются")
     parser.add_argument("--limit", type=int,
                         help="строк выборки на таблицу (переопределяет конфиг)")
+    parser.add_argument("--strategy", choices=("head", "tail", "head_tail"),
+                        help="откуда брать выборку: head — начало таблицы, "
+                             "tail — конец, head_tail — пополам (по умолчанию)")
     parser.add_argument("--only", action="append", metavar="ИСТОЧНИК",
                         help="сканировать только указанный источник (можно "
                              "повторять)")
@@ -130,6 +133,8 @@ def resolve_formats(value: str) -> List[str]:
 def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
     if args.limit is not None:
         config.scan.sample_limit = args.limit
+    if args.strategy:
+        config.scan.sample_strategy = args.strategy
     if args.dry_run:
         config.scan.dry_run = True
     if args.no_ner:

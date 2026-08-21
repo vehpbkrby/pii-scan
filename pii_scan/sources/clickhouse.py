@@ -45,6 +45,19 @@ def _quote(ident: str) -> str:
     return "`" + ident.replace("`", "``") + "`"
 
 
+_SIMPLE_COLUMN_RE = re.compile(r"^\w+$")
+
+
+def _first_sorting_column(sorting_key: str) -> str:
+    """Первая колонка ключа сортировки — по ней читаем «хвост» таблицы.
+
+    Выражения вида toYYYYMM(dt) не годятся: нужен именно столбец, чтобы
+    ORDER BY ... DESC читался по индексу.
+    """
+    first = (sorting_key or "").split(",")[0].strip()
+    return first if _SIMPLE_COLUMN_RE.match(first) else ""
+
+
 def _lit(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -145,7 +158,8 @@ class ClickHouseSource(Source):
 
     def list_tables(self) -> List[TableInfo]:
         rows = self._query(
-            "SELECT database, name, engine, total_rows FROM system.tables "
+            "SELECT database, name, engine, total_rows, sorting_key "
+            "FROM system.tables "
             "WHERE database NOT IN "
             "('system', 'INFORMATION_SCHEMA', 'information_schema') "
             "AND is_temporary = 0"
@@ -155,8 +169,9 @@ class ClickHouseSource(Source):
                 database=db, name=name, engine=engine or "",
                 rows=int(total) if total is not None else None,
                 is_view=(engine in VIEW_ENGINES),
+                order_key=_first_sorting_column(sorting_key),
             )
-            for db, name, engine, total in rows
+            for db, name, engine, total, sorting_key in rows
             # .inner_id.* — внутреннее хранилище материализованных
             # представлений, дублирует данные исходной таблицы
             if not name.startswith(".inner")
@@ -198,18 +213,27 @@ class ClickHouseSource(Source):
         maxlen = int(self.options.max_value_len)
         qualified = f"{_quote(table.database)}.{_quote(table.name)}"
 
+        parts = self.sample_parts(limit, bool(table.order_key))
         for chunk in self.chunked(target, self.options.max_columns_per_query):
             select = ", ".join(
                 f"substring(toString({_quote(c.name)}), 1, {maxlen}) AS c{i}"
                 for i, c in enumerate(chunk)
             )
-            sql = f"SELECT {select} FROM {qualified} LIMIT {limit}"
-            try:
-                rows = self._query(sql)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("[%s] %s: групповая выборка не удалась (%s), "
-                            "пробую по колонкам", self.name, table.qualified, exc)
-                rows = []
+            rows, failed = [], False
+            for part_limit, from_tail in parts:
+                sql = f"SELECT {select} FROM {qualified}"
+                if from_tail:
+                    sql += f" ORDER BY {_quote(table.order_key)} DESC"
+                sql += f" LIMIT {part_limit}"
+                try:
+                    rows.extend(self._query(sql))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("[%s] %s: групповая выборка не удалась (%s), "
+                                "пробую по колонкам",
+                                self.name, table.qualified, exc)
+                    failed = True
+                    break
+            if failed:
                 self._sample_one_by_one(qualified, chunk, limit, maxlen, result)
                 continue
             result.rows_read = max(result.rows_read, len(rows))

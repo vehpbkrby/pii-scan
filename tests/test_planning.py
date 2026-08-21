@@ -137,3 +137,41 @@ def test_all_representatives_are_recorded():
     leader = next(iter(plan.representatives))
     assert len(plan.representatives[leader]) == 2
     assert all(i.representative == leader for i in plan.inferred_items)
+
+
+# --- стратегия выборки ------------------------------------------------------
+
+def _dummy(strategy: str):
+    from pii_scan.config import SourceConfig
+    from pii_scan.sources.base import Source
+
+    class Dummy(Source):
+        type = "dummy"
+        def connect(self): ...
+        def close(self): ...
+        def write_privileges(self): return []
+        def list_tables(self): return []
+        def list_columns(self, tables): return {}
+        def sample(self, table, columns): ...
+        def is_sampleable(self, data_type): return True
+
+    cfg = SourceConfig(name="d", type="mysql", host="h", port=1, user="u")
+    return Dummy(cfg, ScanOptions(sample_strategy=strategy))
+
+
+def test_head_tail_splits_sample():
+    """По умолчанию половина выборки читается с конца таблицы."""
+    parts = _dummy("head_tail").sample_parts(500, has_order_key=True)
+    assert parts == [(250, False), (250, True)]
+    assert sum(p[0] for p in parts) == 500
+
+
+def test_without_order_key_falls_back_to_head():
+    """Без первичного ключа читать «с конца» нечем — берём голову."""
+    assert _dummy("head_tail").sample_parts(500, has_order_key=False) == [
+        (500, False)]
+
+
+def test_explicit_strategies():
+    assert _dummy("head").sample_parts(100, True) == [(100, False)]
+    assert _dummy("tail").sample_parts(100, True) == [(100, True)]
