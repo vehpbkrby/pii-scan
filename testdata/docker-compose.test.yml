@@ -1,0 +1,46 @@
+# Тестовый стенд: MySQL и ClickHouse с синтетическими данными.
+# НЕ для продуктивной среды — пароли открытые, данные вымышленные.
+#
+#   python generate.py .
+#   docker compose -f docker-compose.test.yml up -d
+#
+# Сканер запускается в той же сети (pii-test-net) и обращается к БД
+# по именам сервисов: mysql:3306 и clickhouse:8123.
+
+name: pii-test
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: pii-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: RootTest_2026
+    volumes:
+      - ./mysql_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",
+             "-uroot", "-pRootTest_2026"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: pii-test-clickhouse
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - ./clickhouse_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+networks:
+  default:
+    name: pii-test-net

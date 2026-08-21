@@ -20,6 +20,7 @@ TABLES = {
         ("order_total", "decimal", ""),
         ("ext_code", "varchar", ""),
         ("payload", "json", ""),
+        ("city", "varchar", ""),
         ("emergency_contact", "varchar", ""),
         ("diagnosis", "varchar", ""),
     ]
@@ -38,6 +39,7 @@ ROWS = {
         '{"client": {"phone": "+79161234568"}, "note": "самовывоз"}',
         '{"client": {"phone": "+79161234569"}, "note": "срочно"}',
     ],
+    "city": ["Челябинск", "Самара", "Казань"],
     "emergency_contact": ["Иванова Мария Петровна", "—", "—"],
     "diagnosis": ["ОРВИ", "", ""],
 }
@@ -146,6 +148,14 @@ def test_passport_needs_name_confirmation(monkeypatch, app_config):
     assert found.get("ext_code") is None or found["ext_code"].verdict == "no"
 
 
+def test_city_is_not_a_surname(monkeypatch, app_config):
+    """Города — такие же слова с заглавной буквы, как фамилии."""
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+    city = found.get("city")
+    assert city is None or "name_part" not in city.codes
+
+
 def test_special_and_third_party_flags(monkeypatch, app_config):
     result = run(monkeypatch, app_config)
     table = result.tables[0]
@@ -161,6 +171,11 @@ def test_dry_run_reads_no_values(monkeypatch, app_config):
     assert all(f.non_null == 0 for f in table.findings)
     # по именам колонок находки всё равно есть
     assert {f.ref.column for f in table.findings} >= {"last_name", "diagnosis"}
+    # «не читали данные» не то же самое, что «колонка пуста»: спецкатегории
+    # в сухом прогоне должны оставаться уверенной находкой
+    found = {f.ref.column: f for f in table.findings}
+    assert found["diagnosis"].verdict == "pii"
+    assert found["emergency_contact"].verdict == "pii"
 
 
 def test_write_access_blocks_scan(monkeypatch, app_config):

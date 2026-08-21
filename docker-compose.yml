@@ -5,6 +5,10 @@ services:
       args:
         WITH_NLP: ${WITH_NLP:-1}
     image: pii-scan:${TAG:-full}
+    # Внутри образа пользователь с uid 10001, а каталог ./out на хосте
+    # принадлежит вам — иначе отчёты не запишутся. Запускайте так:
+    #   PII_UID=$(id -u) PII_GID=$(id -g) docker compose run --rm scanner …
+    user: "${PII_UID:-10001}:${PII_GID:-10001}"
     env_file:
       - .env
     volumes:

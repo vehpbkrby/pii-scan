@@ -15,7 +15,9 @@ import logging
 import re
 from typing import Dict, List, Sequence
 
-from .base import ColumnInfo, Sample, Source, SourceError, TableInfo
+from .base import (
+    ColumnInfo, Sample, Source, SourceError, TableInfo, repair_mojibake,
+)
 
 log = logging.getLogger(__name__)
 
@@ -32,15 +34,21 @@ WRITE_PRIVS = (
     "CREATE", "TRUNCATE", "REPLACE", "LOAD", "GRANT OPTION",
 )
 
-_IDENT_RE = re.compile(r"^[\w$-￿]+$")
+# Управляющие символы в имени объекта — признак повреждённых метаданных
+_BAD_IDENT_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
 
 
 def _quote(ident: str) -> str:
-    """Обратные кавычки. Идентификаторы приходят из information_schema,
-    но проверяем всё равно — защита от инъекции через имя объекта."""
-    if not _IDENT_RE.match(ident):
+    """Экранирование имени объекта.
+
+    Имена приходят из системных таблиц, но подставляются в текст запроса,
+    поэтому экранируются как положено: внутренние обратные кавычки
+    удваиваются. Точки в именах допустимы — так называются служебные
+    таблицы ClickHouse (.inner_id.*).
+    """
+    if not ident or _BAD_IDENT_CHARS & set(ident):
         raise SourceError(f"недопустимый идентификатор: {ident!r}")
-    return f"`{ident}`"
+    return "`" + ident.replace("`", "``") + "`"
 
 
 class MySQLSource(Source):
@@ -205,6 +213,24 @@ class MySQLSource(Source):
                         continue
                     text = value.decode("utf-8", "replace") if isinstance(
                         value, (bytes, bytearray)) else str(value)
+                    fixed = repair_mojibake(text)
+                    if fixed is not None:
+                        text = fixed
+                        self._note_mojibake(table)
                     if text.strip():
                         bucket.append(text)
         return result
+
+    def _note_mojibake(self, table: TableInfo) -> None:
+        """Предупреждаем один раз: молча чинить кодировку нельзя."""
+        if getattr(self, "_mojibake_reported", False):
+            return
+        self._mojibake_reported = True
+        message = (
+            f"[{self.name}] в данных обнаружена двойная кодировка "
+            f"(первым замечен {table.qualified}): значения записаны через "
+            f"соединение с неверной кодировкой. Для анализа они восстановлены, "
+            f"но саму базу это не чинит — проверьте character_set у приложения."
+        )
+        log.warning(message)
+        self.warnings.append(message)

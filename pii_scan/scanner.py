@@ -20,7 +20,9 @@ from typing import Dict, List, Optional, Sequence
 
 from . import jsonwalk
 from .config import AppConfig, ScanOptions
-from .detectors import detect_in_column_name, detect_in_value, mask_value
+from .detectors import (
+    NER_CODES, detect_in_column_name, detect_in_value, mask_value,
+)
 from .model import ColumnRef, Finding, ScanResult, TableStat
 from .nlp import NerTagger
 from .sources.base import (
@@ -108,6 +110,10 @@ class Scanner:
                 if stat.findings:
                     self.result.tables.append(stat)
 
+            for message in source.warnings:
+                if message not in self.result.warnings:
+                    self.result.warnings.append(message)
+
     # --- таблица ----------------------------------------------------------
 
     def _scan_table(self, source: Source, table: TableInfo,
@@ -123,7 +129,7 @@ class Scanner:
             finding = Finding(ref=ColumnRef(
                 source=source.name, database=col.database, table=col.table,
                 column=col.name, data_type=col.data_type, comment=col.comment,
-            ), rows_total=table.rows)
+            ), rows_total=table.rows, dry_run=self.options.dry_run)
             for code in detect_in_column_name(col.name, col.comment):
                 finding.hit(code).by_name = True
             findings[col.name] = finding
@@ -151,6 +157,7 @@ class Scanner:
             finding.sampled = len(values)
             finding.non_null = len(values)
             ner_budget = self.options.ner_values_per_column
+            ner_examined = 0
             json_paths: Dict[str, Finding] = {}
 
             for value in values:
@@ -163,6 +170,7 @@ class Scanner:
                 if self.ner.available and ner_budget > 0 and \
                         self.ner.is_free_text(value):
                     ner_budget -= 1
+                    ner_examined += 1
                     for code in self.ner.analyze(value):
                         hit = finding.hit(code)
                         hit.matched += 1
@@ -171,6 +179,11 @@ class Scanner:
 
                 if self.options.scan_json:
                     self._analyze_json(source, table, finding, value, json_paths)
+
+            # NER просматривает лишь часть выборки — доля считается от неё
+            for code in NER_CODES:
+                if code in finding.hits:
+                    finding.hits[code].examined = ner_examined
 
             for virtual in json_paths.values():
                 virtual.compute_scores()

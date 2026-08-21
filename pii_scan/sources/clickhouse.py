@@ -28,13 +28,21 @@ WRITE_PRIVS = (
 
 VIEW_ENGINES = {"View", "MaterializedView", "LiveView", "WindowView"}
 
-_IDENT_RE = re.compile(r"^[\w$-￿]+$")
+# Управляющие символы в имени объекта — признак повреждённых метаданных
+_BAD_IDENT_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
 
 
 def _quote(ident: str) -> str:
-    if not _IDENT_RE.match(ident):
+    """Экранирование имени объекта.
+
+    Имена приходят из системных таблиц, но подставляются в текст запроса,
+    поэтому экранируются как положено: внутренние обратные кавычки
+    удваиваются. Точки в именах допустимы — так называются служебные
+    таблицы ClickHouse (.inner_id.*).
+    """
+    if not ident or _BAD_IDENT_CHARS & set(ident):
         raise SourceError(f"недопустимый идентификатор: {ident!r}")
-    return f"`{ident}`"
+    return "`" + ident.replace("`", "``") + "`"
 
 
 def _lit(value: str) -> str:
@@ -145,6 +153,9 @@ class ClickHouseSource(Source):
                 is_view=(engine in VIEW_ENGINES),
             )
             for db, name, engine, total in rows
+            # .inner_id.* — внутреннее хранилище материализованных
+            # представлений, дублирует данные исходной таблицы
+            if not name.startswith(".inner")
         ]
 
     def list_columns(self, tables: Sequence[TableInfo]) -> Dict[str, List[ColumnInfo]]:

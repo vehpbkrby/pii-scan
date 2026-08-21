@@ -191,6 +191,7 @@ class Detector:
     external: bool = False       # заполняется извне (NER), не regex
     third_party: bool = False    # ПДн третьих лиц (родственники и т.п.)
     requires_name: bool = False  # без подтверждения по имени поля не засчитывается
+    presence_based: bool = False # важен факт наличия, а не доля значений
 
     def matches_value(self, value: str) -> bool:
         if self.name_only or self.external:
@@ -380,12 +381,16 @@ _D = [
         validator=looks_like_name_part,
         whole_value=True,
         weight=0.75,
+        # Одиночное слово с заглавной буквы — это может быть и фамилия, и город,
+        # и название товара. Без подтверждения по имени поля не засчитываем.
+        requires_name=True,
     ),
     Detector(
         code="ner_person",
         title="ФИО в свободном тексте (NER)",
         category=CAT_COMMON,
         external=True,
+        presence_based=True,
         weight=0.9,
     ),
     Detector(
@@ -393,6 +398,7 @@ _D = [
         title="адрес / населённый пункт в свободном тексте (NER)",
         category=CAT_COMMON,
         external=True,
+        presence_based=True,
         weight=0.45,
     ),
 ]

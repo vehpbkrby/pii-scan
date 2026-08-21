@@ -7,13 +7,38 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 from ..config import ScanOptions, SourceConfig
 
 log = logging.getLogger(__name__)
+
+# Признаки «кракозябр»: кириллица в UTF-8, прочитанная как cp1252/latin-1.
+_MOJIBAKE_MARKERS = ("Ð", "Ñ", "Ã", "Â")
+_CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
+
+
+def repair_mojibake(text: str) -> Optional[str]:
+    """Восстанавливает строку с двойной кодировкой, иначе возвращает None.
+
+    В legacy-базах кириллица сплошь и рядом записана через соединение с
+    неверной кодировкой: 'Голубев' превращается в 'Ð“Ð¾Ð»ÑƒÐ±ÐµÐ²'. Без
+    восстановления сканер молча пропустит все ФИО и адреса в такой базе —
+    то есть худший из возможных исходов для проверки по 152-ФЗ.
+    """
+    if not any(marker in text for marker in _MOJIBAKE_MARKERS):
+        return None
+    for encoding in ("cp1252", "latin-1"):
+        try:
+            fixed = text.encode(encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if _CYRILLIC_RE.search(fixed):
+            return fixed
+    return None
 
 
 class SourceError(Exception):
@@ -62,6 +87,7 @@ class Source(ABC):
         self.config = config
         self.options = options
         self._conn = None
+        self.warnings: List[str] = []   # собираются сканером в отчёт
 
     @property
     def name(self) -> str:

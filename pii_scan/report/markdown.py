@@ -8,19 +8,9 @@ detailed.md — подробный: все находки, включая пог
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List
 
 from ..model import Finding, ScanResult, TableStat
-
-
-def _fmt_rows(rows: Optional[int]) -> str:
-    if rows is None:
-        return "н/д"
-    if rows >= 1_000_000:
-        return f"{rows / 1_000_000:.1f} млн"
-    if rows >= 1_000:
-        return f"{rows / 1_000:.0f} тыс."
-    return str(rows)
 
 
 def _fmt_score(score: float) -> str:
@@ -101,7 +91,7 @@ def render_summary(result: ScanResult) -> str:
             lines.append(
                 f"| {table.source} | `{table.qualified}` | "
                 f"{_escape(', '.join(kinds))} | {_flags(table)} | "
-                f"{_fmt_rows(table.rows_total)} | {_fmt_score(table.score)} |"
+                f"{table.rows_display} | {_fmt_score(table.score)} |"
             )
         lines.append("")
     else:
@@ -177,7 +167,7 @@ def render_detailed(result: ScanResult) -> str:
             lines += [
                 f"### `{table.qualified}` — источник {table.source}",
                 "",
-                f"Строк в таблице: {_fmt_rows(table.rows_total)} · "
+                f"Строк в таблице: {table.rows_display} · "
                 f"прочитано в выборке: {table.rows_sampled} · "
                 f"колонок: {table.columns_total} · "
                 f"отметки: {_flags(table)}",

@@ -3,21 +3,11 @@
 from __future__ import annotations
 
 import sys
-from typing import List, Optional
+from typing import List
 
 from ..model import ScanResult, TableStat
 
 MAX_ROWS = 40
-
-
-def _fmt_rows(rows: Optional[int]) -> str:
-    if rows is None:
-        return "н/д"
-    if rows >= 1_000_000:
-        return f"{rows / 1_000_000:.1f}M"
-    if rows >= 1_000:
-        return f"{rows // 1_000}k"
-    return str(rows)
 
 
 def _table(rows: List[List[str]], header: List[str]) -> str:
@@ -62,7 +52,7 @@ def render(result: ScanResult) -> str:
     if pii:
         rows = [
             [t.qualified, _kinds(t), ", ".join(t.categories) or "—",
-             _fmt_rows(t.rows_total), f"{t.score:.0%}"]
+             t.rows_display, f"{t.score:.0%}"]
             for t in pii[:MAX_ROWS]
         ]
         out.append("ТАБЛИЦЫ С ПДн")

@@ -16,6 +16,9 @@ NAME_BOOST = 0.35         # вклад совпадения по имени ко
 # поэтому непустая колонка сразу считается ПДн, пустая уходит на проверку.
 NAME_ONLY_SCORE = 0.75
 NAME_ONLY_EMPTY = 0.50
+# Порог «наличия» для детекторов свободного текста (NER)
+PRESENCE_MIN_HITS = 3
+PRESENCE_MIN_RATIO = 0.05
 
 VERDICT_TITLES = {
     "pii": "ПДн",
@@ -50,6 +53,7 @@ class Hit:
     code: str
     by_name: bool = False
     matched: int = 0            # сколько значений выборки совпало
+    examined: int = 0           # сколько проверено (0 = вся выборка колонки)
     examples: List[str] = field(default_factory=list)  # замаскированные
 
     def add_example(self, masked: str, limit: int = 3) -> None:
@@ -65,6 +69,7 @@ class Finding:
     non_null: int = 0                   # непустых значений в колонке
     hits: Dict[str, Hit] = field(default_factory=dict)
     scores: Dict[str, float] = field(default_factory=dict)
+    dry_run: bool = False       # данные не читались — «пусто» ≠ «не смотрели»
 
     def hit(self, code: str) -> Hit:
         if code not in self.hits:
@@ -85,15 +90,29 @@ class Finding:
                 # себе ничего не доказывает: любая колонка 10-значных кодов
                 # иначе попадала бы в отчёт как паспорт.
                 continue
+            has_data = self.non_null > 0 or self.dry_run
             if det.name_only:
-                score = NAME_ONLY_SCORE if self.non_null > 0 else NAME_ONLY_EMPTY
+                score = NAME_ONLY_SCORE if has_data else NAME_ONLY_EMPTY
             else:
-                ratio = hit.matched / self.non_null if self.non_null else 0.0
-                score = ratio * det.weight
+                # Знаменатель — сколько значений реально проверялось этим
+                # детектором. У NER бюджет ограничен, и делить его попадания
+                # на всю выборку значит занижать результат в разы.
+                denominator = hit.examined or self.non_null
+                ratio = hit.matched / denominator if denominator else 0.0
+                if det.presence_based:
+                    # Для свободного текста важен факт наличия ПДн, а не доля:
+                    # колонка с ФИО в каждом двадцатом комментарии — носитель
+                    # персональных данных ничуть не меньше, чем в каждом.
+                    score = det.weight if (
+                        hit.matched >= PRESENCE_MIN_HITS
+                        or ratio >= PRESENCE_MIN_RATIO
+                    ) else ratio * det.weight
+                else:
+                    score = ratio * det.weight
                 if hit.by_name:
                     score += NAME_BOOST
-                if hit.by_name and self.non_null == 0:
-                    # колонка пустая — верим только имени
+                if hit.by_name and self.non_null == 0 and not self.dry_run:
+                    # колонка действительно пустая — верим только имени
                     score = max(score, NAME_ONLY_EMPTY)
             self.scores[code] = round(min(score, 1.0), 3)
 
@@ -176,6 +195,20 @@ class TableStat:
     @property
     def qualified(self) -> str:
         return f"{self.database}.{self.table}"
+
+    @property
+    def rows_display(self) -> str:
+        """Размер таблицы — оценка СУБД, а не COUNT(*).
+
+        В MySQL information_schema.TABLE_ROWS для InnoDB берётся из статистики
+        и бывает занижена в сотни раз. Если мы прочитали больше строк, чем
+        обещала статистика, честнее показать «не меньше прочитанного».
+        """
+        if self.rows_total is None:
+            return "н/д"
+        if self.rows_sampled > self.rows_total:
+            return f"≥ {self.rows_sampled}"
+        return f"≈ {self.rows_total}"
 
     @property
     def pii_findings(self) -> List[Finding]:

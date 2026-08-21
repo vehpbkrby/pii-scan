@@ -130,3 +130,18 @@ def test_mask_value():
     masked = mask_value("ivanov@example.com")
     assert masked.startswith("iv") and masked.endswith("m")
     assert "example" not in masked
+
+
+# --- восстановление кодировки ----------------------------------------------
+
+def test_repair_mojibake():
+    from pii_scan.sources.base import repair_mojibake
+
+    # 'Голубев', записанное через соединение с неверной кодировкой
+    broken = "Голубев".encode("utf-8").decode("cp1252")
+    assert repair_mojibake(broken) == "Голубев"
+
+    # нормальные строки не трогаем
+    assert repair_mojibake("Голубев") is None
+    assert repair_mojibake("ivanov@example.com") is None
+    assert repair_mojibake("112-233-445 95") is None

@@ -76,6 +76,33 @@ def setup_logging(args: argparse.Namespace) -> None:
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
     )
+    if not args.verbose:
+        # Драйверы печатают полный traceback на каждую ошибку подключения.
+        # Свою причину мы и так покажем одной строкой.
+        for noisy in ("clickhouse_connect", "urllib3", "pymysql"):
+            logging.getLogger(noisy).setLevel(logging.CRITICAL)
+
+
+def check_out_dir(path: str) -> None:
+    """Права на каталог отчётов проверяются ДО сканирования.
+
+    Иначе многочасовой прогон по проду завершится потерей результата на
+    последнем шаге. Типовая причина — контейнер работает под своим uid,
+    а смонтированный каталог принадлежит пользователю хоста.
+    """
+    probe = os.path.join(path, ".pii-scan-write-test")
+    try:
+        os.makedirs(path, exist_ok=True)
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        os.unlink(probe)
+    except OSError as exc:
+        raise ConfigError(
+            f"каталог отчётов '{path}' недоступен для записи: {exc}.\n"
+            f"В Docker запустите контейнер под своим пользователем:\n"
+            f"  docker run --user \"$(id -u):$(id -g)\" …\n"
+            f"либо выдайте права на каталог: chown 10001:10001 out"
+        ) from exc
 
 
 def resolve_formats(value: str) -> List[str]:
@@ -116,26 +143,23 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
 
 def write_reports(result, out_dir: str, formats: List[str]) -> List[str]:
     os.makedirs(out_dir, exist_ok=True)
+    writers = [
+        ("summary", "summary.md", markdown.write_summary),
+        ("detailed", "detailed.md", markdown.write_detailed),
+        ("json", "findings.json", jsonout.write_json),
+        ("xlsx", "registry.xlsx", xlsx.write_xlsx),
+    ]
     written: List[str] = []
-    if "summary" in formats:
-        path = os.path.join(out_dir, "summary.md")
-        markdown.write_summary(result, path)
-        written.append(path)
-    if "detailed" in formats:
-        path = os.path.join(out_dir, "detailed.md")
-        markdown.write_detailed(result, path)
-        written.append(path)
-    if "json" in formats:
-        path = os.path.join(out_dir, "findings.json")
-        jsonout.write_json(result, path)
-        written.append(path)
-    if "xlsx" in formats:
-        path = os.path.join(out_dir, "registry.xlsx")
+    for fmt, filename, writer in writers:
+        if fmt not in formats:
+            continue
+        path = os.path.join(out_dir, filename)
         try:
-            xlsx.write_xlsx(result, path)
+            writer(result, path)
             written.append(path)
-        except RuntimeError as exc:
-            log.error("XLSX не сформирован: %s", exc)
+        except (OSError, RuntimeError) as exc:
+            # Один не сформировавшийся отчёт не должен обнулять весь прогон
+            log.error("Отчёт %s не сформирован: %s", filename, exc)
     return written
 
 
@@ -158,6 +182,7 @@ def main(argv: List[str] | None = None) -> int:
                 "рядом (в контейнере — /config/config.yml)"
             )
         config = apply_overrides(load_config(path), args)
+        check_out_dir(args.out)
     except ConfigError as exc:
         log.error("Ошибка конфигурации: %s", exc)
         return EXIT_CONFIG
