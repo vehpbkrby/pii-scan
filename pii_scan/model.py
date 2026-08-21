@@ -1,0 +1,235 @@
+# -*- coding: utf-8 -*-
+"""Модель находок и правила скоринга."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+from .detectors import DETECTORS_BY_CODE, CATEGORY_ORDER
+
+# Пороги уверенности
+VERDICT_PII = 0.70        # уверенно ПДн — попадает в лёгкий отчёт
+VERDICT_MAYBE = 0.35      # требует ручной проверки
+NAME_BOOST = 0.35         # вклад совпадения по имени колонки
+# Спецкатегории и родственники определяются только по имени поля. Имена там
+# однозначные (diagnosis, emergency_contact), а цена пропуска высокая —
+# поэтому непустая колонка сразу считается ПДн, пустая уходит на проверку.
+NAME_ONLY_SCORE = 0.75
+NAME_ONLY_EMPTY = 0.50
+
+VERDICT_TITLES = {
+    "pii": "ПДн",
+    "maybe": "требует проверки",
+    "no": "не обнаружено",
+}
+
+
+@dataclass
+class ColumnRef:
+    """Адрес колонки. json_path заполняется для полей внутри JSON-значений."""
+    source: str
+    database: str
+    table: str
+    column: str
+    data_type: str = ""
+    comment: str = ""
+    json_path: Optional[str] = None
+
+    @property
+    def full_column(self) -> str:
+        return f"{self.column}::{self.json_path}" if self.json_path else self.column
+
+    @property
+    def qualified(self) -> str:
+        return f"{self.database}.{self.table}.{self.full_column}"
+
+
+@dataclass
+class Hit:
+    """Свидетельства по одному детектору в одной колонке."""
+    code: str
+    by_name: bool = False
+    matched: int = 0            # сколько значений выборки совпало
+    examples: List[str] = field(default_factory=list)  # замаскированные
+
+    def add_example(self, masked: str, limit: int = 3) -> None:
+        if len(self.examples) < limit and masked not in self.examples:
+            self.examples.append(masked)
+
+
+@dataclass
+class Finding:
+    ref: ColumnRef
+    rows_total: Optional[int] = None    # оценка размера таблицы
+    sampled: int = 0                    # прочитано строк
+    non_null: int = 0                   # непустых значений в колонке
+    hits: Dict[str, Hit] = field(default_factory=dict)
+    scores: Dict[str, float] = field(default_factory=dict)
+
+    def hit(self, code: str) -> Hit:
+        if code not in self.hits:
+            self.hits[code] = Hit(code=code)
+        return self.hits[code]
+
+    # --- скоринг ---------------------------------------------------------
+
+    def compute_scores(self) -> None:
+        """score = доля совпавших значений × вес детектора (+ бонус за имя)."""
+        self.scores = {}
+        for code, hit in self.hits.items():
+            det = DETECTORS_BY_CODE.get(code)
+            if det is None:
+                continue
+            if det.requires_name and not hit.by_name:
+                # Формат без контрольной суммы (паспорт, счёт, индекс) сам по
+                # себе ничего не доказывает: любая колонка 10-значных кодов
+                # иначе попадала бы в отчёт как паспорт.
+                continue
+            if det.name_only:
+                score = NAME_ONLY_SCORE if self.non_null > 0 else NAME_ONLY_EMPTY
+            else:
+                ratio = hit.matched / self.non_null if self.non_null else 0.0
+                score = ratio * det.weight
+                if hit.by_name:
+                    score += NAME_BOOST
+                if hit.by_name and self.non_null == 0:
+                    # колонка пустая — верим только имени
+                    score = max(score, NAME_ONLY_EMPTY)
+            self.scores[code] = round(min(score, 1.0), 3)
+
+    @property
+    def score(self) -> float:
+        return max(self.scores.values(), default=0.0)
+
+    @property
+    def verdict(self) -> str:
+        s = self.score
+        if s >= VERDICT_PII:
+            return "pii"
+        if s >= VERDICT_MAYBE:
+            return "maybe"
+        return "no"
+
+    @property
+    def codes(self) -> List[str]:
+        """Сработавшие детекторы, от самого уверенного к наименее."""
+        return [
+            c for c, _ in sorted(
+                self.scores.items(), key=lambda kv: kv[1], reverse=True
+            ) if self.scores[c] >= VERDICT_MAYBE
+        ]
+
+    @property
+    def titles(self) -> List[str]:
+        return [DETECTORS_BY_CODE[c].title for c in self.codes if c in DETECTORS_BY_CODE]
+
+    @property
+    def categories(self) -> List[str]:
+        cats = {DETECTORS_BY_CODE[c].category for c in self.codes
+                if c in DETECTORS_BY_CODE}
+        return [c for c in CATEGORY_ORDER if c in cats]
+
+    @property
+    def third_party(self) -> bool:
+        return any(DETECTORS_BY_CODE[c].third_party for c in self.codes
+                   if c in DETECTORS_BY_CODE)
+
+    @property
+    def coverage(self) -> str:
+        """Доля значений выборки, распознанных как ПДн.
+
+        Для детекторов, работающих только по имени поля, значения ни при чём —
+        показывать «0/3» было бы враньём.
+        """
+        codes = [c for c in self.codes
+                 if c in DETECTORS_BY_CODE and not DETECTORS_BY_CODE[c].name_only]
+        if not codes or not self.non_null:
+            return "—"
+        matched = max(self.hits[c].matched for c in codes)
+        return f"{matched}/{self.non_null}"
+
+    @property
+    def basis(self) -> str:
+        """Основание вывода — для колонки «Основание» в реестре."""
+        parts = []
+        codes = set(self.codes)
+        if any(self.hits[c].by_name for c in codes if c in self.hits):
+            parts.append("имя поля")
+        if any(self.hits[c].matched for c in codes if c in self.hits):
+            parts.append("значения")
+        if codes & {"ner_person", "ner_location"}:
+            parts.append("NER")
+        return ", ".join(parts) or "—"
+
+
+@dataclass
+class TableStat:
+    """Итог по таблице — основа лёгкого отчёта."""
+    source: str
+    database: str
+    table: str
+    rows_total: Optional[int]
+    findings: List[Finding] = field(default_factory=list)
+    columns_total: int = 0
+    rows_sampled: int = 0
+
+    @property
+    def qualified(self) -> str:
+        return f"{self.database}.{self.table}"
+
+    @property
+    def pii_findings(self) -> List[Finding]:
+        return [f for f in self.findings if f.verdict == "pii"]
+
+    @property
+    def maybe_findings(self) -> List[Finding]:
+        return [f for f in self.findings if f.verdict == "maybe"]
+
+    @property
+    def categories(self) -> List[str]:
+        cats = set()
+        for f in self.pii_findings:
+            cats.update(f.categories)
+        return [c for c in CATEGORY_ORDER if c in cats]
+
+    @property
+    def has_special(self) -> bool:
+        return "специальные" in self.categories
+
+    @property
+    def third_party(self) -> bool:
+        return any(f.third_party for f in self.pii_findings)
+
+    @property
+    def score(self) -> float:
+        return max((f.score for f in self.findings), default=0.0)
+
+
+@dataclass
+class ScanResult:
+    started_at: str = ""
+    finished_at: str = ""
+    duration_sec: float = 0.0
+    options: Dict[str, object] = field(default_factory=dict)
+    sources: List[Dict[str, object]] = field(default_factory=list)
+    tables: List[TableStat] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+
+    @property
+    def pii_tables(self) -> List[TableStat]:
+        return sorted(
+            [t for t in self.tables if t.pii_findings],
+            key=lambda t: (not t.has_special, -t.score, t.qualified),
+        )
+
+    @property
+    def maybe_tables(self) -> List[TableStat]:
+        return sorted(
+            [t for t in self.tables if not t.pii_findings and t.maybe_findings],
+            key=lambda t: (-t.score, t.qualified),
+        )
+
+    @property
+    def all_findings(self) -> List[Finding]:
+        return [f for t in self.tables for f in t.findings]

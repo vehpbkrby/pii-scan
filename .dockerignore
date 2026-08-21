@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+out/
+config/
+tests/
+**/__pycache__/
+*.pyc
+*.md
+!README.md

@@ -1,0 +1,47 @@
+# Пример конфигурации pii-scan.
+# Скопируйте в config/config.yml и отредактируйте.
+# Пароли сюда не пишутся: ${VAR} подставляется из окружения (файл .env).
+
+scan:
+  sample_limit: 500           # строк выборки на таблицу
+  max_value_len: 512          # обрезка значения на стороне БД
+  query_timeout: 15           # секунд на запрос (жёсткий лимит на сервере)
+  max_columns_per_query: 60   # колонок в одной выборке
+  max_threads: 2              # ограничение нагрузки (ClickHouse)
+  scan_json: true             # разбирать JSON внутри значений
+  max_json_paths: 200         # виртуальных колонок на одну JSON-колонку
+  ner: true                   # NER по свободному русскому тексту
+  ner_values_per_column: 50   # бюджет NER на колонку
+  examples_per_hit: 3         # замаскированных примеров в отчёте
+  allow_rw: false             # true — разрешить учётку с правами на запись
+  show_values: false          # true — НЕ маскировать значения (осторожно!)
+
+sources:
+  - name: prod-mysql
+    type: mysql
+    host: 10.0.0.10
+    port: 3306
+    user: pii_reader
+    password: ${MYSQL_PWD}
+    databases: []                 # пусто = все, кроме системных
+    exclude_databases: []
+    include_tables: []            # regex; пусто = все
+    exclude_tables:
+      - '_archive$'
+      - '^tmp_'
+    skip_views: true
+
+  - name: prod-clickhouse
+    type: clickhouse
+    host: 10.0.0.20
+    port: 8123                    # HTTP; для clickhouse-driver будет 9000
+    user: pii_reader
+    password: ${CH_PWD}
+    secure: false
+    databases: []
+    exclude_tables:
+      - '^\.inner'
+    # Distributed и Merge пропускаются по умолчанию: иначе те же данные
+    # попадут в отчёт по нескольку раз. Чтобы сканировать их — задайте
+    # пустой список.
+    skip_engines: [Distributed, Merge, Null, View, MaterializedView]
