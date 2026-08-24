@@ -217,6 +217,8 @@ else
 step "Сборка образа ${IMAGE_NAME}:${TAG}"
 say "Это займёт пару минут; интернет нужен только сейчас."
 
+BUILD_LOG="$(mktemp -t pii-scan-build.XXXXXX.log 2>/dev/null     || echo "${TMPDIR:-/tmp}/pii-scan-build.$$.log")"
+
 BUILD_ARGS=(--build-arg "WITH_NLP=${WITH_NLP}")
 
 if [ -n "$CA_CERT" ]; then
@@ -230,10 +232,10 @@ fi
 [ -n "$TRUSTED_HOST" ] && BUILD_ARGS+=(--build-arg "PIP_TRUSTED_HOST=${TRUSTED_HOST}")
 
 docker build "${BUILD_ARGS[@]}" \
-    -t "${IMAGE_NAME}:${TAG}" "$REPO_DIR" >/tmp/pii-scan-build.log 2>&1 || {
-        tail -20 /tmp/pii-scan-build.log >&2
+    -t "${IMAGE_NAME}:${TAG}" "$REPO_DIR" >"$BUILD_LOG" 2>&1 || {
+        tail -20 "$BUILD_LOG" >&2
         if grep -qE "CERTIFICATE_VERIFY_FAILED|self-signed certificate" \
-                /tmp/pii-scan-build.log; then
+                "$BUILD_LOG"; then
             if [ -f "$REPO_DIR/ca-cert.crt" ]; then
                 CERT_HINT="Сертификат в сборку передавался, но не подошёл —
 похоже, это не тот корень, которым подписывает инспектор. Возьмите связку
@@ -262,9 +264,9 @@ ${CERT_HINT}
     gunzip -c pii-scan-${TAG}.tar.gz | docker load
     ./install.sh --skip-build
 
-Полный лог: /tmp/pii-scan-build.log"
+Полный лог: $BUILD_LOG"
         fi
-        die "сборка не удалась, полный лог: /tmp/pii-scan-build.log"
+        die "сборка не удалась, полный лог: $BUILD_LOG"
     }
 SIZE=$(docker images "${IMAGE_NAME}:${TAG}" --format '{{.Size}}')
 ok "образ ${IMAGE_NAME}:${TAG} собран ($SIZE)"
