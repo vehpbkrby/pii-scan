@@ -365,3 +365,24 @@ def test_unknown_category_is_rejected():
     from pii_scan.detectors import resolve_detectors
     with pytest.raises(ValueError, match="неизвестные категории"):
         resolve_detectors(["фамилии"])
+
+
+def test_filter_narrows_rules_not_columns(monkeypatch, app_config):
+    """Выбор категорий не сужает охват чтения.
+
+    Ограничение --detectors выводит из работы правила, но не колонки:
+    значения читаются у всех полей, иначе имя колонки снова начало бы
+    решать, что проверять.
+    """
+    app_config.scan.detectors = ["фио"]
+    app_config.scan.full_inventory = True
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+
+    # колонка с почтой прочитана, хотя правило про почту выключено
+    assert found["contact"].non_null == 3
+    assert found["contact"].verdict == "no"
+    assert "email" not in found["contact"].scores
+
+    # и колонка с техническими числами тоже прочитана
+    assert found["order_total"].non_null == 3
