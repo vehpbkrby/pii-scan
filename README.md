@@ -392,6 +392,7 @@ KILL QUERY WHERE user = 'pii_reader' SYNC;
 | `учётная запись имеет права на запись` | нужна read-only учётка; осознанно обойти — `--allow-rw` |
 | `Access denied for user` | неверный пароль или учётке не выдан `GRANT SELECT` |
 | `не установлен драйвер MySQL` | запущен не тот образ; пересоберите: `./install.sh` |
+| `Port 9000 is for clickhouse-client program` | образ старее версии с выбором драйвера по порту: `git pull && ./install.sh` |
 | `PermissionError: '/app/pii_scan/__init__.py'` | образ собран на сервере с `umask 077`, файлы внутри нечитаемы для непривилегированного пользователя — обновитесь и пересоберите: `git pull && ./install.sh` |
 | Индикатор не появляется | нет `-t` у `docker run`, либо вывод перенаправлен в файл |
 
@@ -427,7 +428,11 @@ docker build --build-arg WITH_NLP=1 -t pii-scan:full .   # 276 МБ, + NER
 |---|---|---|---|
 | MySQL / MariaDB | 3306 | родной протокол MySQL | PyMySQL (запасной — mysql-connector) |
 | ClickHouse | 8123 (HTTPS — 8443) | HTTP | clickhouse-connect |
-| ClickHouse | 9000 (TLS — 9440) | нативный | clickhouse-driver, если первого нет |
+| ClickHouse | 9000 (TLS — 9440) | нативный | clickhouse-driver |
+
+Драйвер ClickHouse выбирается **по указанному порту**, оба пакета есть в
+образе. Если в конфиге стоит 9000, а сканер идёт по HTTP — значит, образ
+старый, пересоберите (`git pull && ./install.sh`).
 
 TLS включается флагом `secure: true`; при необходимости укажите корневой
 сертификат `ssl_ca` (путь **внутри контейнера**, положите файл в `config/`) и

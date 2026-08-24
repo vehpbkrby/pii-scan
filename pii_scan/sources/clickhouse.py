@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Адаптер ClickHouse.
 
-Работает через clickhouse-connect (HTTP, порт 8123) либо, если его нет, через
-clickhouse-driver (нативный протокол, порт 9000).
+Драйвер выбирается по порту: 8123/8443 — HTTP через clickhouse-connect,
+9000/9440 — нативный протокол через clickhouse-driver. Выбирать по тому,
+какой пакет установлен, нельзя: HTTP-клиент на порту 9000 получает от
+сервера «Port 9000 is for clickhouse-client program».
 
 Безопасность прод-сканирования:
   * размер таблицы берётся из system.tables.total_rows, COUNT(*) не делается;
@@ -27,6 +29,9 @@ WRITE_PRIVS = (
 )
 
 VIEW_ENGINES = {"View", "MaterializedView", "LiveView", "WindowView"}
+
+# Порты нативного протокола: 9000 обычный, 9440 через TLS
+NATIVE_PORTS = frozenset({9000, 9440})
 
 # Управляющие символы в имени объекта — признак повреждённых метаданных
 _BAD_IDENT_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
@@ -80,47 +85,75 @@ class ClickHouseSource(Source):
         # Родные ограничители ClickHouse: max_bytes_to_read,
         # max_execution_speed_bytes, max_memory_usage, priority и прочее
         settings.update(self.config.settings or {})
-        try:
-            import clickhouse_connect
-            tls = {}
-            if cfg.secure:
-                tls["verify"] = cfg.ssl_verify
-                if cfg.ssl_ca:
-                    tls["ca_cert"] = cfg.ssl_ca
-            self._conn = clickhouse_connect.get_client(
-                host=cfg.host, port=cfg.port, username=cfg.user,
-                password=cfg.password, secure=cfg.secure,
-                connect_timeout=max(self.options.query_timeout, 5),
-                send_receive_timeout=self.options.query_timeout * 4,
-                settings=settings, **tls,
-            )
-            self._driver = "clickhouse-connect"
-        except ImportError:
-            try:
-                from clickhouse_driver import Client
-            except ImportError as exc:
-                raise SourceError(
-                    "не установлен драйвер ClickHouse (нужен clickhouse-connect "
-                    "или clickhouse-driver)"
-                ) from exc
-            port = cfg.port if cfg.port not in (8123, 8443) else 9000
-            self._conn = Client(
-                host=cfg.host, port=port, user=cfg.user, password=cfg.password,
-                secure=cfg.secure, settings=settings,
-                connect_timeout=max(self.options.query_timeout, 5),
-                verify=cfg.ssl_verify, ca_certs=cfg.ssl_ca or None,
-            )
-            self._driver = "clickhouse-driver"
+
+        # Драйвер выбирается по порту, а не по тому, что установлено:
+        # 9000/9440 — нативный протокол, HTTP-клиент там получит из сервера
+        # «Port 9000 is for clickhouse-client program».
+        if cfg.port in NATIVE_PORTS:
+            self._connect_native(settings)
+        else:
+            self._connect_http(settings)
+
         log.info("[%s] подключение к ClickHouse %s:%s установлено (%s)",
                  self.name, cfg.host, cfg.port, self._driver)
 
+    def _connect_http(self, settings: dict) -> None:
+        cfg = self.config
+        try:
+            import clickhouse_connect
+        except ImportError:
+            log.info("[%s] clickhouse-connect не установлен, пробую нативный "
+                     "протокол", self.name)
+            self._connect_native(settings, port=9000)
+            return
+        tls = {}
+        if cfg.secure:
+            tls["verify"] = cfg.ssl_verify
+            if cfg.ssl_ca:
+                tls["ca_cert"] = cfg.ssl_ca
+        self._conn = clickhouse_connect.get_client(
+            host=cfg.host, port=cfg.port, username=cfg.user,
+            password=cfg.password, secure=cfg.secure,
+            connect_timeout=max(self.options.query_timeout, 5),
+            send_receive_timeout=self.options.query_timeout * 4,
+            settings=settings, **tls,
+        )
+        self._driver = "clickhouse-connect"
+
+    def _connect_native(self, settings: dict, port: int = 0) -> None:
+        cfg = self.config
+        try:
+            from clickhouse_driver import Client
+        except ImportError as exc:
+            raise SourceError(
+                f"порт {cfg.port} — нативный протокол ClickHouse, для него "
+                f"нужен пакет clickhouse-driver, а он не установлен.\n"
+                f"Либо укажите HTTP-порт (обычно 8123), либо пересоберите "
+                f"образ: ./install.sh"
+            ) from exc
+        self._conn = Client(
+            host=cfg.host, port=port or cfg.port, user=cfg.user,
+            password=cfg.password, secure=cfg.secure, settings=settings,
+            connect_timeout=max(self.options.query_timeout, 5),
+            verify=cfg.ssl_verify, ca_certs=cfg.ssl_ca or None,
+        )
+        self._driver = "clickhouse-driver"
+
     def close(self) -> None:
-        if self._conn is not None:
+        if self._conn is None:
+            return
+        # clickhouse-connect закрывается через close(), clickhouse-driver —
+        # через disconnect()
+        for method in ("close", "disconnect"):
+            closer = getattr(self._conn, method, None)
+            if closer is None:
+                continue
             try:
-                self._conn.close()
+                closer()
+                break
             except Exception:  # noqa: BLE001
-                pass
-            self._conn = None
+                continue
+        self._conn = None
 
     def _query(self, sql: str) -> List[tuple]:
         self.pacer.before_query()
