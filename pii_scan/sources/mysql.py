@@ -31,8 +31,26 @@ SKIP_TYPES = {
 
 WRITE_PRIVS = (
     "ALL PRIVILEGES", "INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
-    "CREATE", "TRUNCATE", "REPLACE", "LOAD", "GRANT OPTION",
+    "CREATE", "TRUNCATE", "REPLACE", "LOAD",
 )
+
+# Ведущее слово GRANT есть в каждой строке вывода и правом не является;
+# право раздавать доступ видно по хвосту WITH GRANT OPTION.
+_GRANT_KEYWORD_RE = re.compile(r"^\s*GRANT\s+", re.I)
+
+
+def parse_write_privileges(grant_lines: Sequence[str]) -> List[str]:
+    """Выбирает из вывода SHOW GRANTS права, позволяющие менять данные."""
+    found: List[str] = []
+    for line in grant_lines:
+        text = str(line)
+        head = _GRANT_KEYWORD_RE.sub("", text.split(" ON ", 1)[0]).upper()
+        for priv in WRITE_PRIVS:
+            if priv in head and priv not in found:
+                found.append(priv)
+        if "WITH GRANT OPTION" in text.upper() and "GRANT OPTION" not in found:
+            found.append("GRANT OPTION")
+    return found
 
 # Управляющие символы в имени объекта — признак повреждённых метаданных
 _BAD_IDENT_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
@@ -145,13 +163,21 @@ class MySQLSource(Source):
     # --- инвентаризация ---------------------------------------------------
 
     def write_privileges(self) -> List[str]:
-        found: List[str] = []
-        for (grant,) in self._execute("SHOW GRANTS FOR CURRENT_USER()"):
-            head = grant.split(" ON ", 1)[0].upper()
-            for priv in WRITE_PRIVS:
-                if priv in head and priv not in found:
-                    found.append(priv)
-        return found
+        self.grants = [
+            grant.decode() if isinstance(grant, bytes) else str(grant)
+            for (grant,) in self._execute("SHOW GRANTS FOR CURRENT_USER()")
+        ]
+        return parse_write_privileges(self.grants)
+
+    def readonly_account_sql(self) -> str:
+        host = "%"   # при необходимости сузьте до подсети сканера
+        return "\n".join([
+            f"CREATE USER 'pii_reader'@'{host}' "
+            f"IDENTIFIED BY '<надёжный_пароль>';",
+            f"GRANT SELECT ON *.* TO 'pii_reader'@'{host}';",
+            "-- либо только нужные базы:",
+            f"-- GRANT SELECT ON имя_базы.* TO 'pii_reader'@'{host}';",
+        ])
 
     def list_tables(self) -> List[TableInfo]:
         rows = self._execute(

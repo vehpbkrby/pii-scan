@@ -25,8 +25,27 @@ log = logging.getLogger(__name__)
 
 WRITE_PRIVS = (
     "ALL", "INSERT", "ALTER", "CREATE", "DROP", "TRUNCATE", "OPTIMIZE",
-    "SYSTEM", "GRANT",
+    "SYSTEM",
 )
+
+# «GRANT SELECT ON db.* TO user» — само слово GRANT начинает каждую строку
+# вывода и правом не является. Право делиться доступом видно по хвосту
+# «WITH GRANT OPTION».
+_GRANT_KEYWORD_RE = re.compile(r"^\s*GRANT\s+", re.I)
+
+
+def parse_write_privileges(grant_lines: Sequence[str]) -> List[str]:
+    """Выбирает из вывода SHOW GRANTS права, позволяющие менять данные."""
+    found: List[str] = []
+    for line in grant_lines:
+        text = str(line)
+        head = _GRANT_KEYWORD_RE.sub("", text.split(" ON ", 1)[0]).upper()
+        for priv in WRITE_PRIVS:
+            if re.search(rf"\b{priv}\b", head) and priv not in found:
+                found.append(priv)
+        if "WITH GRANT OPTION" in text.upper() and "GRANT OPTION" not in found:
+            found.append("GRANT OPTION")
+    return found
 
 VIEW_ENGINES = {"View", "MaterializedView", "LiveView", "WindowView"}
 
@@ -164,17 +183,13 @@ class ClickHouseSource(Source):
     # --- инвентаризация ---------------------------------------------------
 
     def write_privileges(self) -> List[str]:
-        found: List[str] = []
+        self.grants = []
         try:
             rows = self._query("SHOW GRANTS")
         except Exception:  # noqa: BLE001 — у пользователя может не быть доступа
             rows = []
-        for row in rows:
-            grant = str(row[0]).upper()
-            head = grant.split(" ON ", 1)[0]
-            for priv in WRITE_PRIVS:
-                if re.search(rf"\b{priv}\b", head) and priv not in found:
-                    found.append(priv)
+        self.grants = [str(row[0]) for row in rows]
+        found = parse_write_privileges(self.grants)
         if found:
             # readonly=1/2 на уровне профиля перекрывает выданные гранты
             try:
@@ -188,6 +203,15 @@ class ClickHouseSource(Source):
             except Exception:  # noqa: BLE001
                 pass
         return found
+
+    def readonly_account_sql(self) -> str:
+        return "\n".join([
+            "CREATE USER pii_reader IDENTIFIED WITH sha256_password",
+            "    BY '<надёжный_пароль>' SETTINGS readonly = 2;",
+            "GRANT SELECT ON *.* TO pii_reader;",
+            "-- readonly = 2, а не 1: сканеру нужно выставлять",
+            "-- max_execution_time и max_threads для своих запросов",
+        ])
 
     def list_tables(self) -> List[TableInfo]:
         rows = self._query(

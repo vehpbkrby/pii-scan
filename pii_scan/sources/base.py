@@ -90,6 +90,7 @@ class Source(ABC):
         self.options = options
         self._conn = None
         self.warnings: List[str] = []   # собираются сканером в отчёт
+        self.grants: List[str] = []     # сырой SHOW GRANTS — доказательство
         from ..pacing import Pacer as _Pacer
         self.pacer = pacer or _Pacer()
 
@@ -134,6 +135,10 @@ class Source(ABC):
 
     # --- общее ------------------------------------------------------------
 
+    def readonly_account_sql(self) -> str:
+        """SQL для выдачи read-only учётки — его отдают администратору БД."""
+        return ""
+
     def check_access(self) -> List[str]:
         """Проверка read-only. Возвращает найденные права на запись."""
         try:
@@ -142,13 +147,39 @@ class Source(ABC):
             log.warning("[%s] не удалось проверить права: %s", self.name, exc)
             return []
         if privs and not self.options.allow_rw:
-            raise ReadWriteAccessError(
-                f"учётная запись '{self.config.user}' на источнике "
-                f"'{self.name}' имеет права на запись: {', '.join(privs)}.\n"
-                f"Сканеру нужен только SELECT. Выдайте read-only учётку либо "
-                f"запустите с --allow-rw, если это осознанное решение."
-            )
+            raise ReadWriteAccessError(self._access_report(privs))
         return privs
+
+    def _access_report(self, privs: Sequence[str]) -> str:
+        """Готовый текст для администратора БД: что нашли и что нужно взамен.
+
+        Одного перечня привилегий мало — DBA попросит подтверждение, поэтому
+        приводим сырой вывод SHOW GRANTS и сразу нужный ему SQL.
+        """
+        lines = [
+            f"учётная запись '{self.config.user}' на источнике '{self.name}' "
+            f"({self.config.host}:{self.config.port}) имеет права на запись.",
+            "",
+            f"Найденные права: {', '.join(privs)}",
+        ]
+        if self.grants:
+            lines += ["", "Подтверждение — вывод SHOW GRANTS:"]
+            lines += [f"    {line}" for line in self.grants[:15]]
+            if len(self.grants) > 15:
+                lines.append(f"    … и ещё {len(self.grants) - 15} строк")
+
+        sql = self.readonly_account_sql()
+        if sql:
+            lines += ["", "Что запросить у администратора БД:", ""]
+            lines += [f"    {line}" for line in sql.strip().split("\n")]
+
+        lines += [
+            "",
+            "Сканеру нужен только SELECT: он не делает ни одной операции "
+            "записи. Если запуск под этой учётной записью — осознанное "
+            "решение, добавьте --allow-rw.",
+        ]
+        return "\n".join(lines)
 
     def filtered_tables(self) -> List[TableInfo]:
         result: List[TableInfo] = []
