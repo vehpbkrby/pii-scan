@@ -244,10 +244,16 @@ class MySQLSource(Source):
                     sql += f" ORDER BY {_quote(table.order_key)} DESC"
                 sql += f" LIMIT {part_limit}"
                 try:
-                    rows.extend(self._execute(sql))
+                    part_rows = self._execute(sql)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("[%s] %s: выборка не удалась (%s)",
                                 self.name, table.qualified, exc)
+                    continue
+                rows.extend(part_rows)
+                if len(part_rows) < part_limit:
+                    # Таблица меньше выборки — «хвост» вернёт те же строки,
+                    # что и «голова». Второй запрос только удвоит счётчики.
+                    break
             if not rows:
                 continue
             result.rows_read = max(result.rows_read, len(rows))

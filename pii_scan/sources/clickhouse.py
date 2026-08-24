@@ -226,12 +226,16 @@ class ClickHouseSource(Source):
                     sql += f" ORDER BY {_quote(table.order_key)} DESC"
                 sql += f" LIMIT {part_limit}"
                 try:
-                    rows.extend(self._query(sql))
+                    part_rows = self._query(sql)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("[%s] %s: групповая выборка не удалась (%s), "
                                 "пробую по колонкам",
                                 self.name, table.qualified, exc)
                     failed = True
+                    break
+                rows.extend(part_rows)
+                if len(part_rows) < part_limit:
+                    # Таблица меньше выборки — «хвост» вернёт те же строки
                     break
             if failed:
                 self._sample_one_by_one(qualified, chunk, limit, maxlen, result)
