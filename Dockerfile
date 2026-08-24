@@ -10,19 +10,40 @@
 FROM python:3.10-slim AS builder
 
 ARG WITH_NLP=0
+# Для контура с TLS-инспектором или внутренним зеркалом PyPI:
+#   --build-arg PIP_INDEX_URL=https://nexus.corp/repository/pypi/simple
+#   --build-arg PIP_TRUSTED_HOST=nexus.corp
+# и корневой сертификат файлом ca-cert.crt рядом с Dockerfile.
+ARG PIP_INDEX_URL=""
+ARG PIP_TRUSTED_HOST=""
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /build
-COPY requirements.txt requirements-nlp.txt ./
+# ca-cert* необязателен: шаблон без совпадений допустим, пока в списке
+# есть файл, который точно существует
+COPY requirements.txt requirements-nlp.txt ca-cert* ./
 
-RUN python -m venv /opt/venv \
- && /opt/venv/bin/pip install --upgrade pip setuptools wheel \
- && /opt/venv/bin/pip install -r requirements.txt \
- && if [ "$WITH_NLP" = "1" ]; then \
+# pip проверяет сертификаты по связке certifi, а не по системному хранилищу,
+# поэтому корпоративный корневой сертификат нужно и добавить в систему,
+# и явно указать pip через PIP_CERT.
+RUN set -eu; \
+    CERT_FILE="$(ls ca-cert* 2>/dev/null | head -1 || true)"; \
+    if [ -n "$CERT_FILE" ]; then \
+        echo "Корневой сертификат $CERT_FILE добавлен в доверенные"; \
+        cp "$CERT_FILE" /usr/local/share/ca-certificates/corporate-ca.crt; \
+        update-ca-certificates >/dev/null; \
+        export PIP_CERT=/etc/ssl/certs/ca-certificates.crt; \
+    fi; \
+    [ -n "$PIP_INDEX_URL" ] && export PIP_INDEX_URL || true; \
+    [ -n "$PIP_TRUSTED_HOST" ] && export PIP_TRUSTED_HOST || true; \
+    python -m venv /opt/venv; \
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel; \
+    /opt/venv/bin/pip install -r requirements.txt; \
+    if [ "$WITH_NLP" = "1" ]; then \
         /opt/venv/bin/pip install -r requirements-nlp.txt; \
-    fi \
- && find /opt/venv -name '__pycache__' -type d -prune -exec rm -rf {} +
+    fi; \
+    find /opt/venv -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 
 FROM python:3.10-slim

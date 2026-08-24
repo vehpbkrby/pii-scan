@@ -8,6 +8,11 @@
 #   ./install.sh --skip-build        не собирать образ (уже загружен docker load)
 #   ./install.sh --uninstall         удалить обёртку и юниты systemd
 #
+# Для корпоративного контура с TLS-инспектором или внутренним зеркалом PyPI:
+#   ./install.sh --ca-cert /etc/ssl/certs/ca-certificates.crt
+#   ./install.sh --pip-index https://nexus.corp/repository/pypi/simple \
+#                --trusted-host nexus.corp
+#
 # Скрипт создаёт каталоги config/ и out/, собирает образ и ставит обёртку
 # pii-scan, чтобы не набирать длинную команду docker run руками.
 
@@ -20,6 +25,9 @@ TAG="full"
 SYSTEMD_SCHEDULE=""
 DO_UNINSTALL=0
 SKIP_BUILD=0
+CA_CERT=""
+PIP_INDEX=""
+TRUSTED_HOST=""
 
 # --- вывод ------------------------------------------------------------------
 
@@ -44,8 +52,11 @@ while [ $# -gt 0 ]; do
         --full)      WITH_NLP=1; TAG="full" ;;
         --systemd)   SYSTEMD_SCHEDULE="${2:-weekly}"; shift ;;
         --skip-build) SKIP_BUILD=1 ;;
+        --ca-cert)    CA_CERT="${2:-}"; shift ;;
+        --pip-index)  PIP_INDEX="${2:-}"; shift ;;
+        --trusted-host) TRUSTED_HOST="${2:-}"; shift ;;
         --uninstall) DO_UNINSTALL=1 ;;
-        -h|--help)   sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)           die "неизвестный аргумент: $1 (см. --help)" ;;
     esac
     shift
@@ -196,9 +207,53 @@ else
 step "Сборка образа ${IMAGE_NAME}:${TAG}"
 say "Это займёт пару минут; интернет нужен только сейчас."
 
-docker build --build-arg "WITH_NLP=${WITH_NLP}" \
+BUILD_ARGS=(--build-arg "WITH_NLP=${WITH_NLP}")
+
+if [ -n "$CA_CERT" ]; then
+    [ -f "$CA_CERT" ] || die "файл сертификата не найден: $CA_CERT"
+    cp "$CA_CERT" "$REPO_DIR/ca-cert.crt"
+    ok "корневой сертификат взят из $CA_CERT"
+elif [ -f "$REPO_DIR/ca-cert.crt" ]; then
+    ok "используется ca-cert.crt из каталога проекта"
+fi
+[ -n "$PIP_INDEX" ] && BUILD_ARGS+=(--build-arg "PIP_INDEX_URL=${PIP_INDEX}")
+[ -n "$TRUSTED_HOST" ] && BUILD_ARGS+=(--build-arg "PIP_TRUSTED_HOST=${TRUSTED_HOST}")
+
+docker build "${BUILD_ARGS[@]}" \
     -t "${IMAGE_NAME}:${TAG}" "$REPO_DIR" >/tmp/pii-scan-build.log 2>&1 || {
         tail -20 /tmp/pii-scan-build.log >&2
+        if grep -qE "CERTIFICATE_VERIFY_FAILED|self-signed certificate" \
+                /tmp/pii-scan-build.log; then
+            if [ -f "$REPO_DIR/ca-cert.crt" ]; then
+                CERT_HINT="Сертификат в сборку передавался, но не подошёл —
+похоже, это не тот корень, которым подписывает инспектор. Возьмите связку
+хоста целиком, в ней есть всё, чему доверяет сам сервер:
+
+    ./install.sh --ca-cert /etc/ssl/certs/ca-certificates.crt"
+            else
+                CERT_HINT="Так выглядит корпоративный TLS-инспектор: трафик подменяется его
+сертификатом, а внутри образа его корневого CA нет. Хост инспектору
+доверяет, контейнер — ещё нет. Передайте связку сертификатов хоста:
+
+    ./install.sh --ca-cert /etc/ssl/certs/ca-certificates.crt"
+            fi
+            die "сборка не удалась: pip не доверяет сертификату pypi.org.
+
+${CERT_HINT}
+
+Если PyPI закрыт полностью, укажите внутреннее зеркало:
+
+    ./install.sh --pip-index https://nexus.corp/repository/pypi/simple \\
+                 --trusted-host nexus.corp
+
+Либо соберите образ там, где интернет есть, и перенесите файлом:
+
+    docker save pii-scan:${TAG} | gzip > pii-scan-${TAG}.tar.gz
+    gunzip -c pii-scan-${TAG}.tar.gz | docker load
+    ./install.sh --skip-build
+
+Полный лог: /tmp/pii-scan-build.log"
+        fi
         die "сборка не удалась, полный лог: /tmp/pii-scan-build.log"
     }
 SIZE=$(docker images "${IMAGE_NAME}:${TAG}" --format '{{.Size}}')

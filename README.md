@@ -67,6 +67,42 @@ systemctl is-active docker && id -nG | tr ' ' '\n' | grep -x docker && docker in
 Установщик различает эти случаи и подсказывает нужную команду — если он
 сообщает что-то другое, читайте его вывод, там конкретика.
 
+### Корпоративный TLS-инспектор
+
+Если сборка падает так:
+
+```
+[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed:
+self-signed certificate in certificate chain
+ERROR: No matching distribution found for wheel
+```
+
+значит, трафик разбирает корпоративный TLS-инспектор: он подменяет
+сертификат pypi.org своим. Сам сервер этому корню доверяет, а контейнер при
+сборке — ещё нет, у него собственное хранилище. Передайте связку сертификатов
+хоста в сборку:
+
+```bash
+./install.sh --ca-cert /etc/ssl/certs/ca-certificates.crt
+```
+
+Установщик положит её в контекст сборки как `ca-cert.crt` (файл в
+`.gitignore`), образ добавит сертификат в системное хранилище и укажет его
+pip через `PIP_CERT` — **pip проверяет сертификаты по связке certifi, а не по
+системному хранилищу**, поэтому одного `update-ca-certificates` мало.
+
+Если PyPI закрыт полностью, а внутреннее зеркало есть:
+
+```bash
+./install.sh --pip-index https://nexus.corp/repository/pypi/simple --trusted-host nexus.corp
+```
+
+При сборке вручную это те же аргументы:
+
+```bash
+docker build --build-arg WITH_NLP=1 --build-arg PIP_INDEX_URL=... --build-arg PIP_TRUSTED_HOST=... -t pii-scan:full .
+```
+
 ### Сервер без доступа в интернет
 
 Сборка образа — единственный шаг, которому нужен интернет (pip тянет
