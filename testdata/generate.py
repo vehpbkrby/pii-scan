@@ -437,10 +437,123 @@ GRANT SELECT, INSERT ON analytics.* TO etl_writer;""")
     return "\n\n".join(parts) + "\n"
 
 
+# --- PostgreSQL -------------------------------------------------------------
+
+def build_postgres(clients_n=600, orders_n=1200, staff_n=90) -> str:
+    """Те же данные, но со схемами: PostgreSQL трёхуровневый."""
+    parts = [
+        "CREATE SCHEMA IF NOT EXISTS crm;",
+        "CREATE SCHEMA IF NOT EXISTS ops;",
+    ]
+
+    # 1. Клиенты в схеме crm
+    parts.append("""
+CREATE TABLE crm.clients (
+  id           integer PRIMARY KEY,
+  last_name    varchar(60),
+  first_name   varchar(60),
+  email        varchar(120),
+  phone        varchar(20),
+  snils        varchar(14),
+  inn          varchar(12),
+  reg_address  varchar(200),
+  birth_date   date
+);
+COMMENT ON COLUMN crm.clients.snils IS 'СНИЛС клиента';""")
+    rows = []
+    for i in range(1, clients_n + 1):
+        last, first, _ = gen_person()
+        rows.append([
+            str(i), q(last), q(first), q(gen_email(first, last)),
+            q(gen_phone()), q(gen_snils()), q(gen_inn12()),
+            q(gen_address()), q(gen_birth_date()),
+        ])
+    parts.append(batched_insert("crm.clients", [
+        "id", "last_name", "first_name", "email", "phone", "snils", "inn",
+        "reg_address", "birth_date"], rows))
+
+    # 2. Заказы: ПДн в JSONB и в свободном тексте
+    parts.append("""
+CREATE TABLE crm.orders (
+  id         integer PRIMARY KEY,
+  order_code char(10),
+  amount     numeric(10,2),
+  comment    text,
+  payload    jsonb
+);""")
+    rows = []
+    for i in range(1, orders_n + 1):
+        last, first, mid = gen_person()
+        fio = f"{last} {first} {mid}"
+        payload = {"client": {"fio": fio, "phone": gen_phone()},
+                   "city": random.choice(CITIES)}
+        rows.append([
+            str(i),
+            q("".join(random.choice("0123456789") for _ in range(10))),
+            f"{random.randint(100, 90000)}.00",
+            q(gen_comment(fio)),
+            q(json.dumps(payload, ensure_ascii=False)),
+        ])
+    parts.append(batched_insert(
+        "crm.orders", ["id", "order_code", "amount", "comment", "payload"],
+        rows))
+
+    # 3. Сотрудники в другой схеме: спецкатегории и одиночные фамилии
+    parts.append("""
+CREATE TABLE ops.staff (
+  id                integer PRIMARY KEY,
+  rp_responsible    varchar(60),
+  position          varchar(80),
+  salary            numeric(10,2),
+  diagnosis         varchar(120),
+  emergency_contact varchar(150)
+);""")
+    rows = []
+    for i in range(1, staff_n + 1):
+        last, first, mid = gen_person()
+        rel_last, rel_first, rel_mid = gen_person("f")
+        rows.append([
+            str(i), q(last), q(random.choice(POSITIONS)),
+            f"{random.randint(40000, 250000)}.00",
+            q(random.choice(DIAGNOSES)),
+            q(f"{rel_last} {rel_first} {rel_mid}"),
+        ])
+    parts.append(batched_insert("ops.staff", [
+        "id", "rp_responsible", "position", "salary", "diagnosis",
+        "emergency_contact"], rows))
+
+    # 4. Справочник без ПДн — ловушка на ложные срабатывания
+    parts.append("""
+CREATE TABLE ops.settings (
+  id      integer PRIMARY KEY,
+  skey    varchar(60),
+  svalue  varchar(200)
+);""")
+    parts.append(batched_insert("ops.settings", ["id", "skey", "svalue"], [
+        [str(i + 1), q(f"{key}_{i}"), q(random.choice(["true", "300", "info"]))]
+        for i, key in enumerate(SETTINGS * 4)
+    ]))
+
+    # 5. Учётные записи
+    parts.append("""
+DROP ROLE IF EXISTS pii_reader;
+CREATE ROLE pii_reader LOGIN PASSWORD 'ReadOnly_2026!';
+GRANT CONNECT ON DATABASE shop TO pii_reader;
+GRANT USAGE ON SCHEMA crm, ops TO pii_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA crm, ops TO pii_reader;
+DROP ROLE IF EXISTS app_rw;
+CREATE ROLE app_rw LOGIN PASSWORD 'Writer_2026!';
+GRANT CONNECT ON DATABASE shop TO app_rw;
+GRANT USAGE ON SCHEMA crm TO app_rw;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA crm TO app_rw;""")
+    return "\n\n".join(parts) + "\n"
+
+
 def main() -> None:
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
     os.makedirs(out_dir, exist_ok=True)
     for name, content in (("mysql_init.sql", build_mysql()),
+                          ("postgres_init.sql", build_postgres()),
                           ("clickhouse_init.sql", build_clickhouse())):
         path = os.path.join(out_dir, name)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:

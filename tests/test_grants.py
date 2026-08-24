@@ -74,3 +74,27 @@ def test_clickhouse_detects_grant_option():
 
 def test_clickhouse_empty_grants():
     assert ch_parse([]) == []
+
+
+# --- PostgreSQL -------------------------------------------------------------
+
+def test_postgres_readonly_is_clean():
+    from pii_scan.sources.postgres import parse_write_privileges as pg_parse
+
+    rows = [("SELECT", "crm"), ("SELECT", "ops")]
+    assert pg_parse(rows) == []
+
+
+def test_postgres_detects_write():
+    from pii_scan.sources.postgres import parse_write_privileges as pg_parse
+
+    rows = [("SELECT", "crm"), ("INSERT", "crm"), ("UPDATE", "crm"),
+            ("DELETE", "crm")]
+    assert set(pg_parse(rows)) == {"INSERT", "UPDATE", "DELETE"}
+
+
+def test_postgres_truncate_and_trigger_count_as_write():
+    from pii_scan.sources.postgres import parse_write_privileges as pg_parse
+
+    assert set(pg_parse([("TRUNCATE", "public"), ("TRIGGER", "public")])) == {
+        "TRUNCATE", "TRIGGER"}

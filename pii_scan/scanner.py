@@ -181,7 +181,7 @@ class Scanner:
         """
         stat = TableStat(
             source=origins[0].source, database=item.table.database,
-            table=item.table.name, rows_total=item.table.rows,
+            table=item.table.display_name, rows_total=item.table.rows,
             columns_total=len(item.columns),
             inferred_from=item.representative,
         )
@@ -228,8 +228,8 @@ class Scanner:
     def _scan_table(self, source: Source, table: TableInfo,
                     columns: Sequence[ColumnInfo]) -> TableStat:
         stat = TableStat(
-            source=source.name, database=table.database, table=table.name,
-            rows_total=table.rows,
+            source=source.name, database=table.database,
+            table=table.display_name, rows_total=table.rows,
         )
         stat.columns_total = len(columns)
 

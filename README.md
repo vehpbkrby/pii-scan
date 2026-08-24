@@ -1,11 +1,18 @@
 # pii-scan
 
-Поиск персональных данных (152-ФЗ) в **MySQL** и **ClickHouse**. Отвечает на
+Поиск персональных данных (152-ФЗ) в **MySQL**, **PostgreSQL** и
+**ClickHouse**. Отвечает на
 один вопрос: в каких таблицах и полях лежат ПДн, каких категорий и насколько
 можно доверять выводу.
 
 Утилита ничего не пишет в обследуемые БД, никуда не передаёт данные по сети и
 не маскирует поля — только находит и документирует.
+
+| СУБД | Проверено вживую |
+|---|---|
+| MySQL / MariaDB | MySQL 8.4 |
+| PostgreSQL | PostgreSQL 16, несколько схем в одной базе |
+| ClickHouse | ClickHouse 24.8, HTTP и нативный протокол |
 
 ## Что на выходе
 
@@ -487,6 +494,7 @@ docker build --build-arg WITH_NLP=1 -t pii-scan:full .   # 276 МБ, + NER
 | СУБД | Порт по умолчанию | Протокол | Драйвер |
 |---|---|---|---|
 | MySQL / MariaDB | 3306 | родной протокол MySQL | PyMySQL (запасной — mysql-connector) |
+| PostgreSQL | 5432 | родной протокол | psycopg 3 (запасной — psycopg2) |
 | ClickHouse | 8123 (HTTPS — 8443) | HTTP | clickhouse-connect |
 | ClickHouse | 9000 (TLS — 9440) | нативный | clickhouse-driver |
 
@@ -537,6 +545,31 @@ GRANT SELECT ON *.* TO 'pii_reader'@'10.0.0.%';
 GRANT SELECT ON crm.* TO 'pii_reader'@'10.0.0.%';
 GRANT SELECT ON billing.* TO 'pii_reader'@'10.0.0.%';
 ```
+
+### PostgreSQL
+
+```sql
+CREATE ROLE pii_reader LOGIN PASSWORD 'СЛОЖНЫЙ_ПАРОЛЬ';
+GRANT CONNECT ON DATABASE имя_базы TO pii_reader;
+GRANT USAGE ON SCHEMA public TO pii_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO pii_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO pii_reader;
+```
+
+Права выдаются **в каждой обследуемой базе отдельно**: в PostgreSQL нет
+межбазовых запросов, поэтому сканер открывает своё подключение на каждую базу.
+Если `databases` в конфиге не задан, он перечислит все базы, к которым
+разрешено подключаться, и обойдёт их по очереди.
+
+Используются `pg_database`, `pg_class`, `pg_namespace`, `pg_attribute`,
+`pg_index` для структуры, `col_description()` для комментариев к полям,
+`information_schema.role_table_grants` и `pg_roles` для проверки прав.
+Размер таблиц берётся из `pg_class.reltuples` — оценки планировщика,
+`COUNT(*)` не выполняется. Права суперпользователя (`SUPERUSER`, `CREATEDB`,
+`CREATEROLE`) считаются правами на запись.
+
+Имена таблиц трёхуровневые: в отчёте они выглядят как `база.схема.таблица`,
+иначе `public.clients` и `billing.clients` слились бы в одну строку.
 
 ### ClickHouse
 
@@ -790,9 +823,10 @@ JSON и в свободном тексте, плюс намеренные лов
 cd testdata && python generate.py . && docker compose -f docker-compose.test.yml up -d
 ```
 
-Поднимутся MySQL с базой `crm` и ClickHouse с базой `analytics` в сети
-`pii-test-net`, вместе с учётными записями `pii_reader` (только чтение) и
-`app_rw` / `etl_writer` (с правами на запись — для проверки блокировки).
+Поднимутся MySQL с базой `crm`, PostgreSQL с базой `shop` (две схемы —
+`crm` и `ops`) и ClickHouse с базой `analytics` в сети `pii-test-net`, вместе
+с учётными записями `pii_reader` (только чтение) и `app_rw` / `etl_writer`
+(с правами на запись — для проверки блокировки).
 Сканер запускается в той же сети:
 
 ```bash

@@ -57,10 +57,16 @@ class TableInfo:
     engine: str = ""
     is_view: bool = False
     order_key: str = ""    # колонка для чтения «с конца» (PK / ключ сортировки)
+    schema: str = ""       # у PostgreSQL имя трёхуровневое: база.схема.таблица
+
+    @property
+    def display_name(self) -> str:
+        """Имя таблицы для отчёта: со схемой там, где схемы есть."""
+        return f"{self.schema}.{self.name}" if self.schema else self.name
 
     @property
     def qualified(self) -> str:
-        return f"{self.database}.{self.name}"
+        return f"{self.database}.{self.display_name}"
 
 
 @dataclass
@@ -240,6 +246,9 @@ def build_source(config: SourceConfig, options: ScanOptions,
     if config.type == "mysql":
         from .mysql import MySQLSource
         return MySQLSource(config, options, pacer)
+    if config.type == "postgres":
+        from .postgres import PostgresSource
+        return PostgresSource(config, options, pacer)
     if config.type == "clickhouse":
         from .clickhouse import ClickHouseSource
         return ClickHouseSource(config, options, pacer)

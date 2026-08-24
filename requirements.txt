@@ -5,6 +5,7 @@ PyMySQL>=1.1.0
 cryptography>=42.0
 # ClickHouse слушает два протокола: HTTP (8123) и нативный (9000).
 # Драйвер выбирается по порту, поэтому нужны оба пакета.
+psycopg[binary]>=3.1
 clickhouse-connect>=0.7.0
 clickhouse-driver>=0.2.6
 openpyxl>=3.1.0

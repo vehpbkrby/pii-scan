@@ -51,6 +51,19 @@ sources:
     # settings:                 # переменные сессии MySQL
     #   max_execution_time: 5000
 
+  - name: prod-postgres
+    type: postgres
+    host: 10.0.0.15
+    port: 5432
+    user: pii_reader
+    password: ${PG_PWD}
+    secure: false               # true — sslmode=verify-full
+    # Пусто = все базы, к которым разрешено подключаться. В PostgreSQL нет
+    # межбазовых запросов, поэтому на каждую базу открывается своё соединение.
+    databases: []
+    # settings:                 # параметры сессии PostgreSQL
+    #   work_mem: '32MB'
+
   - name: prod-clickhouse
     type: clickhouse
     host: 10.0.0.20

@@ -211,3 +211,26 @@ def test_progress_auto_is_disabled_without_terminal():
 
     bar = ProgressBar(10, mode="auto", stream=_io.StringIO())
     assert not bar.enabled
+
+
+# --- трёхуровневые имена (PostgreSQL) ---------------------------------------
+
+def test_schema_appears_in_table_name():
+    """У PostgreSQL public.clients и billing.clients — разные таблицы."""
+    from pii_scan.sources.base import TableInfo
+
+    plain = TableInfo(database="shop", name="clients")
+    assert plain.display_name == "clients"
+    assert plain.qualified == "shop.clients"
+
+    with_schema = TableInfo(database="shop", schema="billing", name="clients")
+    assert with_schema.display_name == "billing.clients"
+    assert with_schema.qualified == "shop.billing.clients"
+
+
+def test_tables_with_same_name_in_different_schemas_do_not_collide():
+    from pii_scan.sources.base import TableInfo
+
+    a = TableInfo(database="shop", schema="crm", name="clients")
+    b = TableInfo(database="shop", schema="billing", name="clients")
+    assert a.qualified != b.qualified

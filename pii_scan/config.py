@@ -12,19 +12,20 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-SUPPORTED_TYPES = ("mysql", "clickhouse")
+SUPPORTED_TYPES = ("mysql", "postgres", "clickhouse")
 SAMPLE_STRATEGIES = ("head", "tail", "head_tail")
 
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 DEFAULT_EXCLUDE_DB = {
     "mysql": ["mysql", "information_schema", "performance_schema", "sys"],
+    "postgres": ["template0", "template1"],
     "clickhouse": ["system", "INFORMATION_SCHEMA", "information_schema"],
 }
 
 DEFAULT_SKIP_ENGINES = ["Distributed", "Merge", "Null", "View", "MaterializedView"]
 
-DEFAULT_PORT = {"mysql": 3306, "clickhouse": 8123}
+DEFAULT_PORT = {"mysql": 3306, "postgres": 5432, "clickhouse": 8123}
 
 
 class ConfigError(Exception):

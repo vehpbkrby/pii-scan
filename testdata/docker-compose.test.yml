@@ -24,6 +24,20 @@ services:
       timeout: 5s
       retries: 40
 
+  postgres:
+    image: postgres:16
+    container_name: pii-test-postgres
+    environment:
+      POSTGRES_PASSWORD: RootTest_2026
+      POSTGRES_DB: shop
+    volumes:
+      - ./postgres_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shop"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: pii-test-clickhouse
