@@ -74,6 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-values", action="store_true",
                         help="не маскировать примеры значений в отчётах "
                              "(отчёт станет носителем ПДн!)")
+    parser.add_argument("--full-inventory", action="store_true",
+                        help="в отчёты попадут все поля всех таблиц, включая "
+                             "те, где ПДн не найдены — полная опись")
     parser.add_argument("--details", "-d", action="store_true",
                         help="вывести разбивку по полям: какое ПДн в каком "
                              "поле и на каком основании")
@@ -165,6 +168,8 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.scan.allow_rw = True
     if args.show_values:
         config.scan.show_values = True
+    if args.full_inventory:
+        config.scan.full_inventory = True
     if args.pause_ms is not None:
         config.throttle.pause_ms = args.pause_ms
     if args.max_qpm is not None:

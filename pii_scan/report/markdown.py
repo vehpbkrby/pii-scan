@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List
 
-from ..model import Finding, ScanResult, TableStat
+from ..model import Finding, ScanResult, TableStat, VERDICT_TITLES
 
 
 def _fmt_score(score: float) -> str:
@@ -192,8 +192,51 @@ def render_detailed(result: ScanResult) -> str:
                 lines.append(_finding_row(finding))
             lines.append("")
 
+    if result.options.get("full_inventory"):
+        lines += _inventory(result)
+
     lines += _footer(result)
     return "\n".join(lines)
+
+
+def _inventory(result: ScanResult) -> List[str]:
+    """Полная опись: каждое поле каждой обследованной таблицы.
+
+    Нужна, когда результат передают разработчикам: видно не только где
+    нашли ПДн, но и что проверены все поля, включая чистые.
+    """
+    lines = [
+        "## Полная опись полей",
+        "",
+        "Перечислены все поля всех обследованных таблиц, включая те, где "
+        "персональные данные не обнаружены. «Слабый признак» означает, что "
+        "совпадение было, но уверенности не хватило до порога.",
+        "",
+    ]
+    for table in result.tables:
+        if not table.findings:
+            continue
+        lines += [
+            f"### `{table.qualified}` — источник {table.source}",
+            "",
+            f"Полей: {table.columns_total} · строк: {table.rows_display} · "
+            f"прочитано в выборке: {table.rows_sampled}",
+            "",
+            "| Поле | Тип | Вердикт | Вид ПДн | Основание | Совпало | Увер. |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for finding in sorted(table.findings,
+                              key=lambda f: (-f.score, f.ref.full_column)):
+            lines.append(
+                f"| `{_escape(finding.ref.full_column)}` | "
+                f"{_escape(finding.ref.data_type)} | "
+                f"{VERDICT_TITLES[finding.verdict]} | "
+                f"{_escape(finding.summary_kind)} | {finding.basis} | "
+                f"{finding.coverage} | "
+                f"{_fmt_score(finding.score) if finding.score else '—'} |"
+            )
+        lines.append("")
+    return lines
 
 
 def _footer(result: ScanResult) -> List[str]:

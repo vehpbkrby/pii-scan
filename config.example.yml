@@ -20,6 +20,7 @@ scan:
   group_samples: 2              # сколько представителей обследовать
   ner: true                   # NER по свободному русскому тексту
   ner_values_per_column: 50   # бюджет NER на колонку
+  full_inventory: false       # true — в отчёты все поля, включая чистые
   examples_per_hit: 3         # замаскированных примеров в отчёте
   allow_rw: false             # true — разрешить учётку с правами на запись
   show_values: false          # true — НЕ маскировать значения (осторожно!)

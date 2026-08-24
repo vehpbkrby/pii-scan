@@ -10,13 +10,19 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from ..model import Finding, ScanResult
+from ..model import Finding, ScanResult, VERDICT_TITLES
 
 REGISTRY_HEADER = [
     "Источник", "СУБД", "База данных", "Таблица", "Поле", "Тип поля",
     "Категория ПДн", "Вид ПДн", "Третьи лица", "Уверенность", "Основание",
     "Совпало значений", "Строк в таблице (оценка)", "Комментарий к полю",
     "Примеры (маскированные)",
+]
+
+INVENTORY_HEADER = [
+    "Источник", "СУБД", "База данных", "Таблица", "Поле", "Тип поля",
+    "Вердикт", "Категория ПДн", "Вид ПДн", "Уверенность", "Основание",
+    "Совпало значений", "Комментарий к полю",
 ]
 
 SUMMARY_HEADER = [
@@ -112,6 +118,37 @@ def write_xlsx(result: ScanResult, path: str) -> None:
         for finding in table.maybe_findings:
             ws.append(_row(finding, types.get(finding.ref.source, "")))
     autosize(ws)
+
+    # --- Все поля (только в режиме полной описи) ---
+    if result.options.get("full_inventory"):
+        ws = wb.create_sheet("Все поля")
+        setup(ws, INVENTORY_HEADER)
+        clean_fill = PatternFill("solid", fgColor="F2F2F2")
+        for table in result.tables:
+            for finding in sorted(table.findings,
+                                  key=lambda f: (-f.score, f.ref.full_column)):
+                ws.append([
+                    finding.ref.source,
+                    types.get(finding.ref.source, ""),
+                    finding.ref.database,
+                    finding.ref.table,
+                    finding.ref.full_column,
+                    finding.ref.data_type,
+                    VERDICT_TITLES[finding.verdict],
+                    ", ".join(finding.categories) or "—",
+                    finding.summary_kind,
+                    round(finding.score, 2) if finding.score else "",
+                    finding.basis,
+                    finding.coverage,
+                    finding.ref.comment,
+                ])
+                if finding.verdict == "no":
+                    for cell in ws[ws.max_row]:
+                        cell.fill = clean_fill
+                elif "специальные" in finding.categories:
+                    for cell in ws[ws.max_row]:
+                        cell.fill = special_fill
+        autosize(ws)
 
     # --- Сводка ---
     ws = wb.create_sheet("Сводка")

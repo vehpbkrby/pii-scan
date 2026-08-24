@@ -55,6 +55,7 @@ class Scanner:
         self.result.options = {
             "sample_limit": self.options.sample_limit,
             "sample_strategy": self.options.sample_strategy,
+            "full_inventory": self.options.full_inventory,
             "dry_run": self.options.dry_run,
             "scan_json": self.options.scan_json,
             "ner": self.options.ner,
@@ -250,7 +251,12 @@ class Scanner:
         for finding in findings.values():
             finding.compute_scores()
 
-        stat.findings = [f for f in findings.values() if f.hits]
+        # В режиме полной описи в отчёт идут все поля, включая чистые: это
+        # доказательство, что проверено всё, а не выборочно.
+        stat.findings = [
+            f for f in findings.values()
+            if f.hits or self.options.full_inventory
+        ]
         stat.findings.sort(key=lambda f: (-f.score, f.ref.full_column))
         return stat
 

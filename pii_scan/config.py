@@ -82,6 +82,7 @@ class ScanOptions:
     ner: bool = True
     ner_values_per_column: int = 50   # бюджет NER: инференс дорогой
     progress: str = "auto"           # индикатор: auto | on | off
+    full_inventory: bool = False     # в отчёт все поля, включая чистые
     examples_per_hit: int = 3
     allow_rw: bool = False           # разрешить учётку с правами на запись
     dry_run: bool = False            # только схема, ни одного чтения данных

@@ -242,3 +242,37 @@ def test_details_empty_without_findings(monkeypatch, app_config):
     from pii_scan.model import ScanResult
 
     assert render_details(ScanResult()) == ""
+
+
+def test_full_inventory_lists_every_field(monkeypatch, app_config):
+    """Опись должна включать и чистые поля — это доказательство охвата."""
+    app_config.scan.full_inventory = True
+    result = run(monkeypatch, app_config)
+    table = result.tables[0]
+
+    columns = {f.ref.column for f in table.findings}
+    # технические поля без ПДн тоже перечислены
+    assert {"id", "order_total", "ext_code"} <= columns
+    assert len(columns) >= len(TABLES["shop.clients"])
+
+    clean = next(f for f in table.findings if f.ref.column == "id")
+    assert clean.verdict == "no"
+    assert clean.summary_kind in ("—",) or "слабый признак" in clean.summary_kind
+
+
+def test_full_inventory_off_by_default(monkeypatch, app_config):
+    result = run(monkeypatch, app_config)
+    columns = {f.ref.column for f in result.tables[0].findings}
+    assert "id" not in columns
+
+
+def test_weak_signal_is_shown_in_inventory(monkeypatch, app_config):
+    """Совпадение ниже порога не выбрасывается молча, а помечается слабым."""
+    app_config.scan.full_inventory = True
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+
+    code = found["ext_code"]        # 1 из 3 значений похоже на ИНН
+    assert code.verdict == "no"
+    assert "слабый признак" in code.summary_kind
+    assert "ИНН" in code.summary_kind

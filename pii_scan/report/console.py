@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import List
 
-from ..model import ScanResult, TableStat
+from ..model import ScanResult, TableStat, VERDICT_TITLES
 
 MAX_ROWS = 40
 
@@ -37,39 +37,47 @@ def render_details(result: ScanResult) -> str:
     сколько значений выборки совпало.
     """
     out: List[str] = []
-    tables = result.pii_tables + result.maybe_tables
+    full = bool(result.options.get("full_inventory"))
+    tables = result.tables if full else result.pii_tables + result.maybe_tables
     if not tables:
         return ""
 
     out.append("")
     out.append("=" * 72)
-    out.append("ДЕТАЛИЗАЦИЯ ПО ПОЛЯМ")
+    out.append("ПОЛНАЯ ОПИСЬ ПОЛЕЙ" if full else "ДЕТАЛИЗАЦИЯ ПО ПОЛЯМ")
     out.append("=" * 72)
+    if full:
+        out.append("Перечислены все поля всех обследованных таблиц, включая "
+                   "те, где ПДн не обнаружены.")
 
     for table in tables:
-        findings = [f for f in table.findings if f.verdict != "no"]
+        findings = (table.findings if full
+                    else [f for f in table.findings if f.verdict != "no"])
         if not findings:
             continue
         note = f"  [по образцу {table.inferred_from}]" if table.inferred_from else ""
         out.append("")
         out.append(f"{table.qualified}   (источник {table.source}){note}")
-        rows = [
-            [
-                f.ref.full_column,
-                f.ref.data_type or "—",
-                ", ".join(f.titles),
+        rows = []
+        header = ["Поле", "Тип"]
+        if full:
+            header.append("Вердикт")
+        header += ["Вид ПДн", "Категория", "Основание", "Совпало", "Увер.",
+                   "Примеры (маск.)"]
+        for f in sorted(findings, key=lambda x: (-x.score, x.ref.full_column)):
+            row = [f.ref.full_column, f.ref.data_type or "—"]
+            if full:
+                row.append(VERDICT_TITLES[f.verdict])
+            row += [
+                f.summary_kind if full else ", ".join(f.titles),
                 ", ".join(f.categories) or "—",
                 f.basis,
                 f.coverage,
-                f"{f.score:.0%}",
+                f"{f.score:.0%}" if f.score else "—",
                 "; ".join(_examples(f)) or "—",
             ]
-            for f in findings
-        ]
-        out.append(_indent(_table(rows, [
-            "Поле", "Тип", "Вид ПДн", "Категория", "Основание", "Совпало",
-            "Увер.", "Примеры (маск.)",
-        ])))
+            rows.append(row)
+        out.append(_indent(_table(rows, header)))
 
     out.append("")
     return "\n".join(out)

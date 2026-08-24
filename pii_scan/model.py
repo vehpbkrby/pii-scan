@@ -155,6 +155,32 @@ class Finding:
                    if c in DETECTORS_BY_CODE)
 
     @property
+    def weak_titles(self) -> List[str]:
+        """Совпадения ниже порога — для полной описи полей.
+
+        Такое поле в находки не попадает, но в описи честнее показать, что
+        сигнал был и почему его сочли недостаточным.
+        """
+        weak = [
+            (code, score) for code, score in self.scores.items()
+            if 0 < score < VERDICT_MAYBE and code in DETECTORS_BY_CODE
+        ]
+        weak.sort(key=lambda item: -item[1])
+        return [
+            f"{DETECTORS_BY_CODE[code].title} ({score:.0%})"
+            for code, score in weak[:2]
+        ]
+
+    @property
+    def summary_kind(self) -> str:
+        """Вид ПДн для описи: находка, слабый сигнал или пусто."""
+        if self.titles:
+            return ", ".join(self.titles)
+        if self.weak_titles:
+            return "слабый признак: " + ", ".join(self.weak_titles)
+        return "—"
+
+    @property
     def coverage(self) -> str:
         """Доля значений выборки, распознанных как ПДн.
 
