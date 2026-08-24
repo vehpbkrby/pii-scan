@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Pattern, Set
+from typing import Callable, Dict, List, Optional, Pattern, Sequence, Set
 
 # --- категории ПДн по 152-ФЗ ------------------------------------------------
 
@@ -493,14 +493,97 @@ VALUE_DETECTORS: List[Detector] = [
 NER_CODES = ("ner_person", "ner_location")
 
 
-def detect_in_value(value: str) -> Set[str]:
+# Группы для настройки: перечислять коды по одному неудобно, а «искать только
+# ФИО» — обычное требование. Названия принимаются и русские, и латиницей.
+DETECTOR_GROUPS: Dict[str, List[str]] = {
+    "фио": ["fio", "name_part", "ner_person"],
+    "контакты": ["email", "phone", "address", "postal_code", "ner_location"],
+    "документы": ["snils", "inn", "oms", "passport_rf", "foreign_passport",
+                  "driver_license", "birth_certificate"],
+    "финансы": ["bank_card", "bank_account"],
+    "рождение": ["birth_date", "birth_place"],
+    "спецкатегории": ["health", "special_other"],
+    "родственники": ["relatives"],
+}
+
+_GROUP_ALIASES = {
+    "fio": "фио", "name": "фио", "names": "фио",
+    "contacts": "контакты", "contact": "контакты",
+    "documents": "документы", "docs": "документы",
+    "finance": "финансы", "financial": "финансы",
+    "birth": "рождение",
+    "special": "спецкатегории",
+    "relatives": "родственники", "family": "родственники",
+}
+
+
+def known_detector_names() -> List[str]:
+    """Всё, что можно указать в настройке: группы и отдельные коды."""
+    return sorted(DETECTOR_GROUPS) + sorted(DETECTORS_BY_CODE)
+
+
+def resolve_detectors(names: Sequence[str]) -> Set[str]:
+    """Разворачивает список групп и кодов в набор кодов детекторов.
+
+    Пустой список означает «искать всё» — так по умолчанию.
+    """
+    if not names:
+        return set(DETECTORS_BY_CODE)
+
+    active: Set[str] = set()
+    unknown: List[str] = []
+    for raw in names:
+        key = str(raw).strip().lower()
+        key = _GROUP_ALIASES.get(key, key)
+        if key in DETECTOR_GROUPS:
+            active.update(DETECTOR_GROUPS[key])
+        elif key in DETECTORS_BY_CODE:
+            active.add(key)
+        else:
+            unknown.append(str(raw))
+    if unknown:
+        raise ValueError(
+            f"неизвестные категории: {', '.join(unknown)}. "
+            f"Доступно: {', '.join(known_detector_names())}"
+        )
+    return active
+
+
+def describe_detectors(active: Set[str]) -> str:
+    """Человеческое описание охвата — попадает в шапку отчёта."""
+    if active >= set(DETECTORS_BY_CODE):
+        return "все категории"
+    groups = [
+        name for name, codes in DETECTOR_GROUPS.items()
+        if set(codes) & active
+    ]
+    covered = {c for name in groups for c in DETECTOR_GROUPS[name]}
+    extra = sorted(
+        DETECTORS_BY_CODE[c].title for c in active - covered
+        if c in DETECTORS_BY_CODE
+    )
+    parts = [
+        name if set(DETECTOR_GROUPS[name]) <= active else f"{name} (частично)"
+        for name in groups
+    ]
+    return ", ".join(parts + extra) or "ничего не выбрано"
+
+
+def detect_in_value(value: str, active: Optional[Set[str]] = None) -> Set[str]:
     """Коды детекторов, сработавших на конкретном значении."""
-    return {d.code for d in VALUE_DETECTORS if d.matches_value(value)}
+    return {
+        d.code for d in VALUE_DETECTORS
+        if (active is None or d.code in active) and d.matches_value(value)
+    }
 
 
-def detect_in_column_name(name: str, comment: str = "") -> Set[str]:
+def detect_in_column_name(name: str, comment: str = "",
+                          active: Optional[Set[str]] = None) -> Set[str]:
     """Коды детекторов, сработавших на имени колонки или комментарии."""
-    return {d.code for d in DETECTORS if d.matches_name(name, comment)}
+    return {
+        d.code for d in DETECTORS
+        if (active is None or d.code in active) and d.matches_name(name, comment)
+    }
 
 
 def mask_value(value: str, keep_head: int = 2, keep_tail: int = 1) -> str:

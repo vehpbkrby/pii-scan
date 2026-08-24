@@ -114,6 +114,9 @@ def render(result: ScanResult) -> str:
     out.append(f"  Из них третьи лица:      {sum(1 for t in pii if t.third_party)}")
     out.append(f"  Требуют проверки:        {len(result.maybe_tables)}")
     out.append(f"  Длительность:            {result.duration_sec} с")
+    if result.options.get("detectors_limited"):
+        out.append(f"  Искали только:           "
+                   f"{result.options.get('detectors')}")
     out.append("")
 
     if pii:

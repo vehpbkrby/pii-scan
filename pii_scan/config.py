@@ -84,6 +84,10 @@ class ScanOptions:
     ner_values_per_column: int = 50   # бюджет NER: инференс дорогой
     progress: str = "auto"           # индикатор: auto | on | off
     full_inventory: bool = False     # в отчёт все поля, включая чистые
+    # Какие категории ПДн искать. Пусто = все. Принимаются группы
+    # (фио, контакты, документы, финансы, рождение, спецкатегории,
+    # родственники) и отдельные коды детекторов.
+    detectors: List[str] = field(default_factory=list)
     examples_per_hit: int = 3
     allow_rw: bool = False           # разрешить учётку с правами на запись
     dry_run: bool = False            # только схема, ни одного чтения данных
@@ -187,6 +191,11 @@ def load_config(path: str) -> AppConfig:
     if scan.progress not in ("auto", "on", "off"):
         raise ConfigError(
             f"progress: '{scan.progress}' — допустимо auto, on, off")
+    try:
+        from .detectors import resolve_detectors
+        resolve_detectors(scan.detectors)
+    except ValueError as exc:
+        raise ConfigError(f"detectors: {exc}") from exc
     if scan.sample_strategy not in SAMPLE_STRATEGIES:
         raise ConfigError(
             f"sample_strategy: '{scan.sample_strategy}' — допустимо "

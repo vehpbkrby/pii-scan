@@ -74,6 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-values", action="store_true",
                         help="не маскировать примеры значений в отчётах "
                              "(отчёт станет носителем ПДн!)")
+    parser.add_argument("--detectors", metavar="СПИСОК",
+                        help="какие категории ПДн искать, через запятую: "
+                             "фио, контакты, документы, финансы, рождение, "
+                             "спецкатегории, родственники. По умолчанию все")
     parser.add_argument("--full-inventory", action="store_true",
                         help="в отчёты попадут все поля всех таблиц, включая "
                              "те, где ПДн не найдены — полная опись")
@@ -170,6 +174,15 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.scan.show_values = True
     if args.full_inventory:
         config.scan.full_inventory = True
+    if args.detectors:
+        config.scan.detectors = [
+            part.strip() for part in args.detectors.split(",") if part.strip()
+        ]
+        from .detectors import resolve_detectors
+        try:
+            resolve_detectors(config.scan.detectors)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
     if args.pause_ms is not None:
         config.throttle.pause_ms = args.pause_ms
     if args.max_qpm is not None:

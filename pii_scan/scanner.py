@@ -23,7 +23,8 @@ from typing import Dict, List, Optional, Sequence
 from . import jsonwalk
 from .config import AppConfig, ScanOptions
 from .detectors import (
-    NER_CODES, detect_in_column_name, detect_in_value, mask_value,
+    NER_CODES, describe_detectors, detect_in_column_name,
+    detect_in_value, mask_value, resolve_detectors,
 )
 from .model import ColumnRef, Finding, ScanResult, TableStat
 from .nlp import NerTagger
@@ -42,7 +43,11 @@ class Scanner:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.options: ScanOptions = config.scan
-        self.ner = NerTagger(enabled=self.options.ner and not self.options.dry_run)
+        self.active = resolve_detectors(self.options.detectors)
+        # NER нужен, только если в охвате есть распознавание по тексту
+        ner_needed = bool(set(NER_CODES) & self.active)
+        self.ner = NerTagger(
+            enabled=self.options.ner and ner_needed and not self.options.dry_run)
         self.pacer = Pacer(config.throttle)
         self.result = ScanResult()
 
@@ -56,6 +61,8 @@ class Scanner:
             "sample_limit": self.options.sample_limit,
             "sample_strategy": self.options.sample_strategy,
             "full_inventory": self.options.full_inventory,
+            "detectors": describe_detectors(self.active),
+            "detectors_limited": len(self.active) < len(resolve_detectors([])),
             "dry_run": self.options.dry_run,
             "scan_json": self.options.scan_json,
             "ner": self.options.ner,
@@ -239,7 +246,8 @@ class Scanner:
                 source=source.name, database=col.database, table=col.table,
                 column=col.name, data_type=col.data_type, comment=col.comment,
             ), rows_total=table.rows, dry_run=self.options.dry_run)
-            for code in detect_in_column_name(col.name, col.comment):
+            for code in detect_in_column_name(col.name, col.comment,
+                                              self.active):
                 finding.hit(code).by_name = True
             findings[col.name] = finding
 
@@ -275,7 +283,7 @@ class Scanner:
             json_paths: Dict[str, Finding] = {}
 
             for position, value in enumerate(values):
-                for code in detect_in_value(value):
+                for code in detect_in_value(value, self.active):
                     hit = finding.hit(code)
                     hit.matched += 1
                     hit.add_example(self._example(value),
@@ -336,13 +344,14 @@ class Scanner:
                     json_path=path,
                 )
                 virtual = Finding(ref=ref, rows_total=parent.rows_total)
-                for code in detect_in_column_name(jsonwalk.leaf_name(path)):
+                for code in detect_in_column_name(
+                        jsonwalk.leaf_name(path), active=self.active):
                     virtual.hit(code).by_name = True
                 json_paths[path] = virtual
             virtual = json_paths[path]
             virtual.non_null += 1
             virtual.sampled += 1
-            for code in detect_in_value(leaf):
+            for code in detect_in_value(leaf, self.active):
                 hit = virtual.hit(code)
                 hit.matched += 1
                 hit.add_example(self._example(leaf), self.options.examples_per_hit)

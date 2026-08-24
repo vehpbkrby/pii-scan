@@ -41,7 +41,13 @@ def _header(result: ScanResult, title: str) -> List[str]:
         f"* Дата проведения: {result.started_at}",
         f"* Длительность: {result.duration_sec} с",
         f"* Режим: {mode}",
+        f"* Искали: {result.options.get('detectors', 'все категории')}",
     ]
+    if result.options.get("detectors_limited"):
+        lines.append(
+            "* **Внимание: охват ограничен настройкой.** Категории, не "
+            "перечисленные выше, не искались — отчёт нельзя считать полным "
+            "обследованием.")
     if not result.options.get("dry_run"):
         strategy = {
             "head": "начало таблицы",

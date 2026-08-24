@@ -316,3 +316,52 @@ def test_weak_signal_is_shown_in_inventory(monkeypatch, app_config):
     clean = found["id"]
     assert clean.verdict == "no"
     assert clean.summary_kind == "—"
+
+
+# --- выбор категорий ПДн ----------------------------------------------------
+
+def test_only_fio_is_searched(monkeypatch, app_config):
+    """При выборе одной категории остальные правила не срабатывают."""
+    app_config.scan.detectors = ["фио"]
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+
+    assert found["last_name"].verdict == "pii"          # ФИО ищем
+    assert "contact" not in found                       # почту — нет
+    assert "diagnosis" not in found                     # спецкатегории — нет
+
+    # ни одно правило вне выбранной категории не сработало
+    fired = {code for f in result.tables[0].findings for code in f.scores}
+    assert fired <= {"fio", "name_part", "ner_person"}
+    assert found["f_17"].verdict != "pii"               # СНИЛС не засчитан
+    assert result.options["detectors_limited"] is True
+    assert result.options["detectors"] == "фио"
+
+
+def test_latin_group_name_works(monkeypatch, app_config):
+    app_config.scan.detectors = ["contacts"]
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+    assert found["contact"].verdict == "pii"            # email
+    assert "last_name" not in found
+
+
+def test_single_code_can_be_selected(monkeypatch, app_config):
+    """Кроме групп принимается и отдельный код детектора."""
+    app_config.scan.detectors = ["snils"]
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+    assert found["f_17"].verdict == "pii"
+    assert set(found) == {"f_17"}
+
+
+def test_all_categories_by_default(monkeypatch, app_config):
+    result = run(monkeypatch, app_config)
+    assert result.options["detectors"] == "все категории"
+    assert result.options["detectors_limited"] is False
+
+
+def test_unknown_category_is_rejected():
+    from pii_scan.detectors import resolve_detectors
+    with pytest.raises(ValueError, match="неизвестные категории"):
+        resolve_detectors(["фамилии"])
