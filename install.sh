@@ -5,6 +5,7 @@
 #   ./install.sh                     полная установка (образ с NER)
 #   ./install.sh --slim              образ без NER: 164 МБ вместо 276 МБ
 #   ./install.sh --systemd weekly    плюс регулярный прогон по расписанию
+#   ./install.sh --skip-build        не собирать образ (уже загружен docker load)
 #   ./install.sh --uninstall         удалить обёртку и юниты systemd
 #
 # Скрипт создаёт каталоги config/ и out/, собирает образ и ставит обёртку
@@ -18,6 +19,7 @@ WITH_NLP=1
 TAG="full"
 SYSTEMD_SCHEDULE=""
 DO_UNINSTALL=0
+SKIP_BUILD=0
 
 # --- вывод ------------------------------------------------------------------
 
@@ -41,8 +43,9 @@ while [ $# -gt 0 ]; do
         --slim)      WITH_NLP=0; TAG="slim" ;;
         --full)      WITH_NLP=1; TAG="full" ;;
         --systemd)   SYSTEMD_SCHEDULE="${2:-weekly}"; shift ;;
+        --skip-build) SKIP_BUILD=1 ;;
         --uninstall) DO_UNINSTALL=1 ;;
-        -h|--help)   sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)           die "неизвестный аргумент: $1 (см. --help)" ;;
     esac
     shift
@@ -89,8 +92,53 @@ fi
 step "Проверка окружения"
 
 command -v docker >/dev/null 2>&1 || die "docker не установлен"
-docker info >/dev/null 2>&1 || die "нет доступа к docker: запустите демон \
-или добавьте пользователя в группу docker (sudo usermod -aG docker \$USER)"
+
+# Причин «нет доступа к docker» несколько, и лечатся они по-разному.
+# Самая частая и неочевидная: usermod -aG выполнен, но текущая сессия
+# свой список групп не перечитывает — он выдаётся при входе в систему.
+docker_access_problem() {
+    local me
+    me="$(id -un)"
+
+    if command -v systemctl >/dev/null 2>&1; then
+        local state
+        state="$(systemctl is-active docker 2>/dev/null || true)"
+        if [ "$state" != "active" ]; then
+            printf 'демон docker не запущен (systemctl is-active docker → %s).\n' \
+                   "${state:-неизвестно}"
+            printf '\n    sudo systemctl start docker\n'
+            printf '    sudo systemctl enable docker    # чтобы поднимался при загрузке\n'
+            printf '\nenable без start только прописывает автозапуск, но сервис не поднимает.\n'
+            return
+        fi
+    fi
+
+    if getent group docker 2>/dev/null | grep -qE "(:|,)${me}(,|$)"; then
+        if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+            printf 'пользователь %s состоит в группе docker, но текущая сессия её\n' "$me"
+            printf 'не видит: членство в группах выдаётся при входе в систему и в уже\n'
+            printf 'запущенной оболочке не обновляется.\n'
+            printf '\n    newgrp docker            # применить в этой сессии\n'
+            printf '    sg docker -c ./install.sh   # либо сразу запустить установку\n'
+            printf '\nЛибо выйдите из системы и зайдите заново.\n'
+            return
+        fi
+        printf 'группа docker выдана и применена, но доступ к сокету не получен.\n'
+        printf 'Проверьте права на сокет:\n'
+        printf '\n    ls -l /var/run/docker.sock\n'
+        return
+    fi
+
+    printf 'пользователь %s не состоит в группе docker.\n' "$me"
+    printf '\n    sudo usermod -aG docker %s\n' "$me"
+    printf '    newgrp docker            # применить, не перелогиниваясь\n'
+}
+
+if ! docker info >/dev/null 2>&1; then
+    die "нет доступа к docker.
+
+$(docker_access_problem)"
+fi
 ok "docker $(docker --version | awk '{print $3}' | tr -d ,)"
 
 if docker compose version >/dev/null 2>&1; then
@@ -102,6 +150,8 @@ fi
 
 AVAILABLE_KB=$(df -Pk "$REPO_DIR" | awk 'NR==2 {print $4}')
 NEEDED_KB=$([ "$WITH_NLP" -eq 1 ] && echo 1500000 || echo 700000)
+# Готовому образу место под сборку не нужно
+[ "$SKIP_BUILD" -eq 1 ] && NEEDED_KB=0
 if [ "$AVAILABLE_KB" -lt "$NEEDED_KB" ]; then
     warn "на диске $((AVAILABLE_KB / 1024)) МБ — для сборки может не хватить"
 else
@@ -133,6 +183,16 @@ fi
 
 # --- сборка образа ----------------------------------------------------------
 
+if [ "$SKIP_BUILD" -eq 1 ]; then
+    step "Сборка образа пропущена (--skip-build)"
+    if ! docker image inspect "${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
+        die "образа ${IMAGE_NAME}:${TAG} нет в системе. Загрузите его файлом:
+    gunzip -c pii-scan-${TAG}.tar.gz | docker load
+или уберите --skip-build, чтобы собрать на месте (нужен интернет)."
+    fi
+    ok "образ ${IMAGE_NAME}:${TAG} найден ($(docker images         "${IMAGE_NAME}:${TAG}" --format '{{.Size}}'))"
+else
+
 step "Сборка образа ${IMAGE_NAME}:${TAG}"
 say "Это займёт пару минут; интернет нужен только сейчас."
 
@@ -143,6 +203,8 @@ docker build --build-arg "WITH_NLP=${WITH_NLP}" \
     }
 SIZE=$(docker images "${IMAGE_NAME}:${TAG}" --format '{{.Size}}')
 ok "образ ${IMAGE_NAME}:${TAG} собран ($SIZE)"
+
+fi
 
 # --- обёртка ----------------------------------------------------------------
 
