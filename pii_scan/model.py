@@ -86,11 +86,6 @@ class Finding:
             det = DETECTORS_BY_CODE.get(code)
             if det is None:
                 continue
-            if det.requires_name and not hit.by_name:
-                # Формат без контрольной суммы (паспорт, счёт, индекс) сам по
-                # себе ничего не доказывает: любая колонка 10-значных кодов
-                # иначе попадала бы в отчёт как паспорт.
-                continue
             has_data = self.non_null > 0 or self.dry_run
             if det.name_only:
                 score = NAME_ONLY_SCORE if has_data else NAME_ONLY_EMPTY

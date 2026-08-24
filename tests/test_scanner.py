@@ -127,15 +127,25 @@ def test_technical_columns_are_clean(monkeypatch, app_config):
 
 
 def test_sequential_codes_are_not_pii(monkeypatch, app_config):
-    """Одно случайно валидное значение не делает колонку носителем ПДн."""
+    """Технические коды не объявляются ПДн, но и не замалчиваются.
+
+    Формат без контрольной суммы (10 цифр — как у паспорта) выносится на
+    ручную проверку: молчать нельзя, объявлять ПДн — тоже.
+    """
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
-    code = found.get("ext_code")
-    assert code is None or code.verdict == "no"
+    code = found["ext_code"]
+    assert code.verdict == "maybe"
+    assert code.score < 0.7
 
 
-def test_passport_needs_name_confirmation(monkeypatch, app_config):
-    """Тот же формат значений: без имени поля — молчим, с именем — находка."""
+def test_name_only_raises_confidence_not_gates_it(monkeypatch, app_config):
+    """Имя поля усиливает вывод, но без него значения не отбрасываются.
+
+    Те же самые значения: в колонке с говорящим именем — уверенная находка,
+    в колонке с невнятным — «требует проверки». Молчать нельзя ни в одном
+    из случаев, иначе ПДн в поле вроде rp_responsible теряются.
+    """
     monkeypatch.setitem(ROWS, "passport_serial", list(ROWS["ext_code"]))
     monkeypatch.setitem(
         TABLES, "shop.clients",
@@ -143,17 +153,43 @@ def test_passport_needs_name_confirmation(monkeypatch, app_config):
     )
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
+
     assert found["passport_serial"].verdict == "pii"
     assert "passport_rf" in found["passport_serial"].codes
-    assert found.get("ext_code") is None or found["ext_code"].verdict == "no"
+    # то же содержимое без подсказки в имени — не молчание, а проверка
+    assert found["ext_code"].verdict == "maybe"
+    assert "passport_rf" in found["ext_code"].codes
 
 
-def test_city_is_not_a_surname(monkeypatch, app_config):
-    """Города — такие же слова с заглавной буквы, как фамилии."""
+def test_lone_surnames_are_found(monkeypatch, app_config):
+    """Колонка из одних фамилий не теряется, даже если имя поля ни о чём.
+
+    Ровно этот случай пропускался на боевой базе: поле rp_responsible,
+    в каждой строке одна фамилия.
+    """
+    monkeypatch.setitem(ROWS, "rp_responsible",
+                        ["Иванов", "Кузнецова", "Соколов"])
+    monkeypatch.setitem(
+        TABLES, "shop.clients",
+        TABLES["shop.clients"] + [("rp_responsible", "varchar", "")],
+    )
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
-    city = found.get("city")
-    assert city is None or "name_part" not in city.codes
+    assert found["rp_responsible"].verdict in ("pii", "maybe")
+    assert "name_part" in found["rp_responsible"].codes
+
+
+def test_city_column_is_flagged_for_review_not_as_pii(monkeypatch, app_config):
+    """Города неотличимы от фамилий по значению — но и молчать о них нельзя.
+
+    Ростов, Псков, Киров выглядят как фамилии. Такая колонка выносится на
+    ручную проверку, а не объявляется ПДн и не выбрасывается молча.
+    """
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for f in result.tables[0].findings}
+    city = found["city"]
+    assert city.verdict == "maybe"
+    assert city.score < 0.7
 
 
 def test_special_and_third_party_flags(monkeypatch, app_config):
@@ -272,7 +308,11 @@ def test_weak_signal_is_shown_in_inventory(monkeypatch, app_config):
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
 
-    code = found["ext_code"]        # 1 из 3 значений похоже на ИНН
-    assert code.verdict == "no"
-    assert "слабый признак" in code.summary_kind
-    assert "ИНН" in code.summary_kind
+    code = found["ext_code"]
+    # ИНН подтвердился лишь в одном значении из трёх — это ниже порога,
+    # но в описи такой сигнал должен остаться видимым
+    assert any("ИНН" in weak for weak in code.weak_titles)
+
+    clean = found["id"]
+    assert clean.verdict == "no"
+    assert clean.summary_kind == "—"

@@ -133,7 +133,14 @@ _SURNAME = re.compile(
     re.I,
 )
 _CYR_WORD = re.compile(r"^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?$")
-_FIO_INITIALS = re.compile(r"^[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.\s?[А-ЯЁ]\.?$")
+_WORD = r"[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?"
+_INITIAL = r"[А-ЯЁ]\.?"
+# Инициалы бывают и до фамилии, и после: «Иванов И.И.», «И.И. Иванов»,
+# «И. Иванов», «Иванов И». Ловим оба порядка.
+_FIO_INITIALS = re.compile(
+    rf"^(?:{_WORD}\s*{_INITIAL}(?:\s*{_INITIAL})?"
+    rf"|{_INITIAL}(?:\s*{_INITIAL})?\s*{_WORD})$"
+)
 
 
 def looks_like_fio(value: str) -> bool:
@@ -190,7 +197,6 @@ class Detector:
     whole_value: bool = False    # validator применяется ко всему значению
     external: bool = False       # заполняется извне (NER), не regex
     third_party: bool = False    # ПДн третьих лиц (родственники и т.п.)
-    requires_name: bool = False  # без подтверждения по имени поля не засчитывается
     presence_based: bool = False # важен факт наличия, а не доля значений
 
     def matches_value(self, value: str) -> bool:
@@ -221,6 +227,12 @@ class Detector:
         low = name.lower()
         haystack = f"{low} {low.replace('_', ' ')} {comment.lower()}"
         return bool(self.name_re.search(haystack))
+
+
+# Поля, где по смыслу лежит человек, но слова «фамилия» в названии нет:
+# rp_responsible, executor, менеджер, куратор. Без них одиночные фамилии
+# в таких колонках пропускались.
+ROLE_RE = (r"|отв\\b|ответствен|исполнител|responsible|manager|менеджер|\\bagent\\b|агент|сотрудник|работник|employee|автор|author|owner|владелец|куратор|curator|руководител|получател|представител|контактн.*лиц|\\bперсона\\b")
 
 
 def _n(pattern: str) -> Pattern:
@@ -281,7 +293,6 @@ _B = [
         value_re=re.compile(r"\b\d{2}\s?\d{2}\s?[\-\s]?\d{6}\b"),
         validator=valid_passport_rf,
         weight=0.45,
-        requires_name=True,
     ),
     Detector(
         code="foreign_passport",
@@ -290,7 +301,6 @@ _B = [
         name_re=_n(r"загран|foreign_?passport|international_?passport"),
         value_re=re.compile(r"\b\d{2}\s?\d{7}\b"),
         weight=0.45,
-        requires_name=True,
     ),
     Detector(
         code="driver_license",
@@ -299,7 +309,6 @@ _B = [
         name_re=_n(r"driver_?lic|водит.*удост|\bву\b|\bvu_?(num|no)\b|prava"),
         value_re=re.compile(r"\b\d{2}\s?\d{2}\s?\d{6}\b"),
         weight=0.45,
-        requires_name=True,
     ),
     Detector(
         code="birth_certificate",
@@ -316,7 +325,6 @@ _B = [
                    r"\bbic\b|iban"),
         value_re=re.compile(r"\b\d{20}\b"),
         weight=0.45,
-        requires_name=True,
     ),
 ]
 
@@ -363,8 +371,7 @@ _C = [
         category=CAT_COMMON,
         name_re=_n(r"индекс|zip|postal|postcode"),
         value_re=re.compile(r"\b[1-6]\d{5}\b"),
-        weight=0.15,  # сам по себе бесполезен, работает как подтверждение адреса
-        requires_name=True,
+        weight=0.3,   # шестизначных чисел много, вес намеренно низкий
     ),
 ]
 
@@ -376,7 +383,7 @@ _D = [
         title="ФИО",
         category=CAT_COMMON,
         name_re=_n(r"\bfio\b|фио|full_?name|fullname|\bname\b|клиент.*имя|"
-                   r"client_?name|customer_?name|\bfrom_?name\b"),
+                   r"client_?name|customer_?name|\bfrom_?name\b" + ROLE_RE),
         validator=looks_like_fio,
         whole_value=True,
         weight=1.0,
@@ -386,13 +393,13 @@ _D = [
         title="часть имени (фамилия / имя / отчество)",
         category=CAT_COMMON,
         name_re=_n(r"фамил|surname|last_?name|first_?name|\bимя\b|отчеств|"
-                   r"patronymic|middle_?name|familiya|imya|otchestvo"),
+                   r"patronymic|middle_?name|familiya|imya|otchestvo" + ROLE_RE),
         validator=looks_like_name_part,
         whole_value=True,
-        weight=0.75,
-        # Одиночное слово с заглавной буквы — это может быть и фамилия, и город,
-        # и название товара. Без подтверждения по имени поля не засчитываем.
-        requires_name=True,
+        # Одиночное слово с заглавной буквы бывает и фамилией, и городом
+        # (Ростов, Псков, Киров). Веса хватает на «требует проверки»:
+        # колонка не теряется, но и в ПДн без второго признака не идёт.
+        weight=0.5,
     ),
     Detector(
         code="ner_person",
