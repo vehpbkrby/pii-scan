@@ -218,3 +218,27 @@ def test_ner_budget_is_spread_over_whole_sample(monkeypatch, app_config):
     assert len(targets) == 4
     # берутся из разных частей выборки, а не первые четыре подряд
     assert max(targets) >= 50
+
+
+def test_details_output_lists_fields(monkeypatch, app_config):
+    """Разбивка по полям — то, что отдают разработчикам на проверку."""
+    from pii_scan.report.console import render_details
+
+    result = run(monkeypatch, app_config)
+    text = render_details(result)
+
+    # поле, вид ПДн, основание вывода и таблица — всё в одном месте
+    assert "shop.clients" in text
+    assert "contact" in text and "адрес электронной почты" in text
+    assert "f_17" in text and "СНИЛС" in text
+    assert "payload::$.client.phone" in text        # и ключи внутри JSON
+    assert "имя поля" in text or "значения" in text
+    # чистые колонки в детализацию не попадают
+    assert "order_total" not in text
+
+
+def test_details_empty_without_findings(monkeypatch, app_config):
+    from pii_scan.report.console import render_details
+    from pii_scan.model import ScanResult
+
+    assert render_details(ScanResult()) == ""

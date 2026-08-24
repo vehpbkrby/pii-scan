@@ -74,6 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-values", action="store_true",
                         help="не маскировать примеры значений в отчётах "
                              "(отчёт станет носителем ПДн!)")
+    parser.add_argument("--details", "-d", action="store_true",
+                        help="вывести разбивку по полям: какое ПДн в каком "
+                             "поле и на каком основании")
     parser.add_argument("--progress", choices=("auto", "on", "off"),
                         help="индикатор выполнения: auto — только в терминале "
                              "(по умолчанию), on — всегда, off — никогда")
@@ -251,7 +254,7 @@ def main(argv: List[str] | None = None) -> int:
         log.error("Прервано пользователем")
         return EXIT_ERROR
 
-    console.print_result(result)
+    console.print_result(result, details=args.details)
 
     written = write_reports(result, args.out, formats)
     if written:
