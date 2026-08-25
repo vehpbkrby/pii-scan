@@ -21,6 +21,7 @@ def finding_to_dict(finding: Finding) -> Dict[str, Any]:
         "rows_total": finding.rows_total,
         "sampled": finding.sampled,
         "non_null": finding.non_null,
+        "placeholders": finding.placeholders,
         "score": finding.score,
         "verdict": finding.verdict,
         "verdict_title": VERDICT_TITLES[finding.verdict],

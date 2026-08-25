@@ -18,6 +18,15 @@ NAME_BOOST = 0.35         # вклад совпадения по имени ко
 # просто их совпадение уже ничего не добавляет к и без того ясному выводу.
 NAME_CONCLUSIVE_SCORE = 0.75
 NAME_CONCLUSIVE_EMPTY = 0.50
+# Доля, начиная с которой уточнять уже нечего. Шкала линейна до неё и
+# упирается в потолок после: колонка, где ПДн в каждом втором значении,
+# носитель персональных данных ничуть не меньше, чем колонка, где они в
+# каждом. Прежняя линейная доля отвечала на вопрос «всё ли поле — ПДн»,
+# тогда как для 152-ФЗ важно «есть ли в поле ПДн».
+SATURATION_RATIO = 0.5
+# Во сколько раз заглушки могут максимум сократить знаменатель. Колонка из
+# пятисот «н/д» и одного телефона иначе давала бы долю в 100 %.
+MIN_RATIO_DIVISOR = 10
 # Порог «наличия» для детекторов свободного текста (NER)
 PRESENCE_MIN_HITS = 3
 PRESENCE_MIN_RATIO = 0.05
@@ -68,7 +77,8 @@ class Finding:
     ref: ColumnRef
     rows_total: Optional[int] = None    # оценка размера таблицы
     sampled: int = 0                    # прочитано строк
-    non_null: int = 0                   # непустых значений в колонке
+    non_null: int = 0                   # содержательных значений в колонке
+    placeholders: int = 0               # «-», «н/д» и прочее «здесь ничего нет»
     hits: Dict[str, Hit] = field(default_factory=dict)
     scores: Dict[str, float] = field(default_factory=dict)
     dry_run: bool = False       # данные не читались — «пусто» ≠ «не смотрели»
@@ -92,7 +102,13 @@ class Finding:
             # Знаменатель — сколько значений реально проверялось этим
             # детектором. У NER бюджет ограничен, и делить его попадания
             # на всю выборку значит занижать результат в разы.
-            denominator = hit.examined or self.non_null
+            #
+            # Заглушки из знаменателя вычтены (см. non_null), но не
+            # безгранично: в колонке из пятисот «н/д» и одного телефона
+            # доля иначе выйдет стопроцентной. Ниже десятой части
+            # прочитанного знаменатель не опускается.
+            denominator = hit.examined or max(self.non_null,
+                                              self.sampled // MIN_RATIO_DIVISOR)
             ratio = hit.matched / denominator if denominator else 0.0
             if det.presence_based:
                 # Для свободного текста важен факт наличия ПДн, а не доля:
@@ -103,7 +119,7 @@ class Finding:
                     or ratio >= PRESENCE_MIN_RATIO
                 ) else ratio * det.weight
             else:
-                score = ratio * det.weight
+                score = min(1.0, ratio / SATURATION_RATIO) * det.weight
             if hit.by_name:
                 score += NAME_BOOST
             if det.name_conclusive and hit.by_name:

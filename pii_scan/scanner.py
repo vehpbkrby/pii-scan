@@ -24,7 +24,7 @@ from . import jsonwalk
 from .config import AppConfig, ScanOptions
 from .detectors import (
     NER_CODES, describe_detectors, detect_in_column_name,
-    detect_in_value, mask_value, resolve_detectors,
+    detect_in_value, is_placeholder, mask_value, resolve_detectors,
 )
 from .model import ColumnRef, Finding, ScanResult, TableStat
 from .nlp import NerTagger
@@ -208,6 +208,7 @@ class Scanner:
             clone = Finding(
                 ref=ref, rows_total=item.table.rows,
                 sampled=source_finding.sampled, non_null=source_finding.non_null,
+                placeholders=source_finding.placeholders,
                 hits=deepcopy(source_finding.hits),
                 inferred_from=item.representative,
             )
@@ -279,6 +280,11 @@ class Scanner:
             if finding is None:
                 continue
             finding.sampled = len(values)
+            # «-», «н/д», «не указан» — это записанное отсутствие значения,
+            # а не значение. В знаменателе доли им не место: иначе колонка
+            # телефонов, заполненная наполовину, выглядит наполовину чужой.
+            values = [v for v in values if not is_placeholder(v)]
+            finding.placeholders = finding.sampled - len(values)
             finding.non_null = len(values)
             ner_targets = self._ner_targets(values)
             ner_examined = 0
@@ -351,8 +357,11 @@ class Scanner:
                     virtual.hit(code).by_name = True
                 json_paths[path] = virtual
             virtual = json_paths[path]
-            virtual.non_null += 1
             virtual.sampled += 1
+            if is_placeholder(leaf):
+                virtual.placeholders += 1
+                continue
+            virtual.non_null += 1
             for code in detect_in_value(leaf, self.active):
                 hit = virtual.hit(code)
                 hit.matched += 1

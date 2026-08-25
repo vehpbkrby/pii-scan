@@ -312,10 +312,15 @@ def test_weak_signal_is_shown_in_inventory(monkeypatch, app_config):
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
 
-    code = found["ext_code"]
-    # ИНН подтвердился лишь в одном значении из трёх — это ниже порога,
-    # но в описи такой сигнал должен остаться видимым
-    assert any("ИНН" in weak for weak in code.weak_titles)
+    # Слабый сигнал: одно попадание на большой выборке. Считаем вручную —
+    # в фикстуре всего три строки, а на трёх значениях доля не бывает низкой.
+    from pii_scan.model import ColumnRef, Finding
+    faint = Finding(ref=ColumnRef("s", "d", "t", "comment"), non_null=500,
+                    sampled=500)
+    faint.hit("inn").matched = 1
+    faint.compute_scores()
+    assert faint.verdict == "no"
+    assert any("ИНН" in weak for weak in faint.weak_titles)
 
     clean = found["id"]
     assert clean.verdict == "no"
@@ -429,18 +434,22 @@ def test_score_follows_share_of_matched_values():
     from pii_scan.model import ColumnRef, Finding
 
     def verdict(matched):
-        f = Finding(ref=ColumnRef("s", "d", "t", "c"), non_null=500)
+        f = Finding(ref=ColumnRef("s", "d", "t", "c"), non_null=500,
+                    sampled=500)
         f.hit("snils").matched = matched
         f.compute_scores()
         return f.verdict, f.score
 
-    assert verdict(1)[0] == "no"
-    assert verdict(100)[0] == "no"
-    assert verdict(250)[0] == "maybe"
+    assert verdict(1)[0] == "no"        # опечатка в чужом поле
+    assert verdict(50)[0] == "no"       # примесь: 10 % значений
+    assert verdict(100)[0] == "maybe"   # пятая часть колонки — уже вопрос
+    assert verdict(250)[0] == "pii"     # половина — шкала насыщается
     assert verdict(485)[0] == "pii"
-    # оценка растёт строго монотонно вместе с долей
-    scores = [verdict(m)[1] for m in (1, 100, 250, 485, 500)]
-    assert scores == sorted(scores) and len(set(scores)) == len(scores)
+    # оценка растёт монотонно вместе с долей и упирается в потолок
+    scores = [verdict(m)[1] for m in (1, 50, 100, 250, 485, 500)]
+    assert scores == sorted(scores)
+    assert scores[-1] == scores[-2] == 1.0      # после половины — насыщение
+    assert len(set(scores[:4])) == 4            # до неё разрешение сохраняется
 
 
 def test_weak_signal_shows_count_not_percent():
@@ -564,3 +573,51 @@ def test_basis_names_the_unconfirmed_case(monkeypatch, app_config):
     hit.by_name, hit.matched = True, 500
     both.compute_scores()
     assert both.basis == "имя поля, значения"
+
+
+def test_placeholders_leave_the_denominator():
+    """Колонка телефонов, наполовину состоящая из «н/д», — колонка телефонов.
+
+    Заглушка это записанное отсутствие значения. Считая её доводом против,
+    сканер занижал долю ровно на степень незаполненности поля.
+    """
+    from pii_scan.model import ColumnRef, Finding
+
+    # 319 телефонов, 360 заглушек — случай с боевой базы
+    f = Finding(ref=ColumnRef("s", "d", "t", "number_b"), sampled=679,
+                non_null=319, placeholders=360)
+    f.hit("phone").matched = 319
+    f.compute_scores()
+    assert f.verdict == "pii"
+    assert f.coverage == "319/319"
+
+
+def test_placeholders_cannot_manufacture_certainty():
+    """Одно попадание среди пятисот «н/д» — не колонка ПДн.
+
+    Без ограничения снизу очистка знаменателя дала бы 1/1 = 100 %.
+    """
+    from pii_scan.model import ColumnRef, Finding
+
+    f = Finding(ref=ColumnRef("s", "d", "t", "junk"), sampled=500,
+                non_null=1, placeholders=499)
+    f.hit("phone").matched = 1
+    f.compute_scores()
+    assert f.verdict == "no"
+
+
+def test_format_only_rules_stay_capped_by_weight():
+    """Ловушка: колонка случайных 10-значных чисел.
+
+    Формат паспорта совпадает у всех значений, но контрольной суммы у
+    правила нет — насыщение шкалы не должно поднимать такую колонку выше
+    «требует проверки». От неё защищает вес правила, а не доля.
+    """
+    from pii_scan.model import ColumnRef, Finding
+
+    f = Finding(ref=ColumnRef("s", "d", "t", "random_ids"), sampled=679,
+                non_null=679)
+    f.hit("passport_rf").matched = 679
+    f.compute_scores()
+    assert f.verdict == "maybe"
+    assert f.score < 0.70

@@ -188,3 +188,28 @@ def test_icd10_code_found_by_value():
     assert "health" not in detect_in_value("SKU12")
     assert "health" not in detect_in_value("код A01 в примечании")
     assert "health" not in detect_in_value("Гипертоническая болезнь II ст.")
+
+
+# --- заглушки ---------------------------------------------------------------
+
+def test_placeholders_are_recognised():
+    """«Здесь ничего нет», записанное текстом, — это отсутствие значения."""
+    from pii_scan.detectors import is_placeholder
+
+    for value in ["-", "—", "  --  ", "н/д", "Н/Д", "не указан", "Не указано",
+                  "нет данных", "NULL", "null", "n/a", "неизвестно",
+                  "отсутствует", "???", "", "   "]:
+        assert is_placeholder(value), value
+
+
+def test_ambiguous_values_are_not_placeholders():
+    """«0», «нет», «x» бывают настоящими значениями — их не выбрасываем.
+
+    Ошибка в эту сторону завышает долю совпадений: колонка из нулей и
+    одного телефона стала бы стопроцентной находкой.
+    """
+    from pii_scan.detectors import is_placeholder
+
+    for value in ["0", "00", "нет", "x", "х", "no", "false", "1", "-1",
+                  "Иванов", "0000000000"]:
+        assert not is_placeholder(value), value
