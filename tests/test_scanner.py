@@ -23,6 +23,9 @@ TABLES = {
         ("city", "varchar", ""),
         ("emergency_contact", "varchar", ""),
         ("diagnosis", "varchar", ""),
+        # Имя ни о чём не говорит, комментария нет — найтись должно
+        # исключительно по содержимому.
+        ("field_23", "varchar", ""),
     ]
 }
 
@@ -42,6 +45,7 @@ ROWS = {
     "city": ["Челябинск", "Самара", "Казань"],
     "emergency_contact": ["Иванова Мария Петровна", "—", "—"],
     "diagnosis": ["ОРВИ", "", ""],
+    "field_23": ["I10", "E11.9", "J06.9"],
 }
 
 
@@ -399,3 +403,17 @@ def test_filter_narrows_rules_not_columns(monkeypatch, app_config):
 
     # и колонка с техническими числами тоже прочитана
     assert found["order_total"].non_null == 3
+
+
+def test_opaque_column_found_by_values_alone(monkeypatch, app_config):
+    """`field_23` с кодами МКБ-10: ни имени, ни комментария — только значения.
+
+    Закрепляет требование «имя поля не участвует в отсеве»: колонка,
+    о которой схема не говорит ничего, обследуется наравне с остальными.
+    """
+    result = run(monkeypatch, app_config)
+    found = {f.ref.column: f for f in result.tables[0].findings}
+    assert "field_23" in found
+    hit = found["field_23"].hits["health"]
+    assert not hit.by_name          # имя не дало ни одного очка
+    assert hit.matched == 3         # вывод целиком построен на значениях

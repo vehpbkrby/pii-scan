@@ -11,11 +11,13 @@ from .detectors import DETECTORS_BY_CODE, CATEGORY_ORDER
 VERDICT_PII = 0.70        # уверенно ПДн — попадает в лёгкий отчёт
 VERDICT_MAYBE = 0.35      # требует ручной проверки
 NAME_BOOST = 0.35         # вклад совпадения по имени колонки
-# Спецкатегории и родственники определяются только по имени поля. Имена там
-# однозначные (diagnosis, emergency_contact), а цена пропуска высокая —
-# поэтому непустая колонка сразу считается ПДн, пустая уходит на проверку.
-NAME_ONLY_SCORE = 0.75
-NAME_ONLY_EMPTY = 0.50
+# У части правил имя поля само по себе решает: `diagnosis`, `emergency_contact`
+# двусмысленности не оставляют, а цена пропуска высокая. Такая колонка сразу
+# считается ПДн, если в ней есть данные, и уходит на проверку, если она пуста.
+# Значения при этом читаются и проверяются как у всех остальных колонок —
+# просто их совпадение уже ничего не добавляет к и без того ясному выводу.
+NAME_CONCLUSIVE_SCORE = 0.75
+NAME_CONCLUSIVE_EMPTY = 0.50
 # Порог «наличия» для детекторов свободного текста (NER)
 PRESENCE_MIN_HITS = 3
 PRESENCE_MIN_RATIO = 0.05
@@ -87,29 +89,33 @@ class Finding:
             if det is None:
                 continue
             has_data = self.non_null > 0 or self.dry_run
-            if det.name_only:
-                score = NAME_ONLY_SCORE if has_data else NAME_ONLY_EMPTY
+            # Знаменатель — сколько значений реально проверялось этим
+            # детектором. У NER бюджет ограничен, и делить его попадания
+            # на всю выборку значит занижать результат в разы.
+            denominator = hit.examined or self.non_null
+            ratio = hit.matched / denominator if denominator else 0.0
+            if det.presence_based:
+                # Для свободного текста важен факт наличия ПДн, а не доля:
+                # колонка с ФИО в каждом двадцатом комментарии — носитель
+                # персональных данных ничуть не меньше, чем в каждом.
+                score = det.weight if (
+                    hit.matched >= PRESENCE_MIN_HITS
+                    or ratio >= PRESENCE_MIN_RATIO
+                ) else ratio * det.weight
             else:
-                # Знаменатель — сколько значений реально проверялось этим
-                # детектором. У NER бюджет ограничен, и делить его попадания
-                # на всю выборку значит занижать результат в разы.
-                denominator = hit.examined or self.non_null
-                ratio = hit.matched / denominator if denominator else 0.0
-                if det.presence_based:
-                    # Для свободного текста важен факт наличия ПДн, а не доля:
-                    # колонка с ФИО в каждом двадцатом комментарии — носитель
-                    # персональных данных ничуть не меньше, чем в каждом.
-                    score = det.weight if (
-                        hit.matched >= PRESENCE_MIN_HITS
-                        or ratio >= PRESENCE_MIN_RATIO
-                    ) else ratio * det.weight
-                else:
-                    score = ratio * det.weight
-                if hit.by_name:
-                    score += NAME_BOOST
-                if hit.by_name and self.non_null == 0 and not self.dry_run:
-                    # колонка действительно пустая — верим только имени
-                    score = max(score, NAME_ONLY_EMPTY)
+                score = ratio * det.weight
+            if hit.by_name:
+                score += NAME_BOOST
+            if det.name_conclusive and hit.by_name:
+                # Имя не оставляет двусмысленности — вывод не зависит от того,
+                # удалось ли распознать сами значения. Берём максимум: если
+                # значения тоже совпали, оценка от этого только вырастет.
+                score = max(score,
+                            NAME_CONCLUSIVE_SCORE if has_data
+                            else NAME_CONCLUSIVE_EMPTY)
+            if hit.by_name and self.non_null == 0 and not self.dry_run:
+                # колонка действительно пустая — верим только имени
+                score = max(score, NAME_CONCLUSIVE_EMPTY)
             self.scores[code] = round(min(score, 1.0), 3)
 
     @property

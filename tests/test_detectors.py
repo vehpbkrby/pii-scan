@@ -156,3 +156,35 @@ def test_repair_mojibake():
     assert repair_mojibake("Голубев") is None
     assert repair_mojibake("ivanov@example.com") is None
     assert repair_mojibake("112-233-445 95") is None
+
+
+# --- имя поля не должно быть условием проверки ------------------------------
+
+def test_name_only_means_no_pattern_exists():
+    """`name_only` — это «формы нет», а не «решили не смотреть».
+
+    Флаг закрывает распознавание по значению, поэтому ставить его правилу,
+    у которого есть value_re, значит молча выключить проверку содержимого.
+    """
+    from pii_scan.detectors import DETECTORS
+
+    for det in DETECTORS:
+        if det.name_only:
+            assert det.value_re is None and det.validator is None, det.code
+
+
+def test_birth_certificate_found_by_value():
+    """«II-МЮ 123456» — форма своеобразная, имя колонки не нужно."""
+    assert "birth_certificate" in detect_in_value("II-МЮ 123456")
+    assert "birth_certificate" in detect_in_value("выдано III МЮ №123456")
+    assert "birth_certificate" not in detect_in_value("123456")
+
+
+def test_icd10_code_found_by_value():
+    """Диагноз словами regex не отличит, а код МКБ-10 — отличит."""
+    for code in ("I10", "E11.9", "U07.1", "C50.11"):
+        assert "health" in detect_in_value(code), code
+    # артикул похож, но проверка идёт по всему значению целиком
+    assert "health" not in detect_in_value("SKU12")
+    assert "health" not in detect_in_value("код A01 в примечании")
+    assert "health" not in detect_in_value("Гипертоническая болезнь II ст.")

@@ -113,3 +113,34 @@ def test_documented_categories_resolve():
                  "special", "relatives", "fio", "docs", "financial",
                  "snils", "bank_card"]:
         assert resolve_detectors([name]), f"категория {name} ничего не даёт"
+
+
+def test_documented_detector_counts_match_catalog():
+    """README называет конкретные числа — они должны сходиться с каталогом.
+
+    Такие цифры молча устаревают при первом же новом правиле, а раздел
+    про охват как раз на них и держится.
+    """
+    import re
+    from pathlib import Path
+
+    from pii_scan.detectors import DETECTORS, VALUE_DETECTORS
+
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8")
+
+    ner = sum(1 for d in DETECTORS if d.external)
+
+    match = re.search(
+        r"Из (\d+) правил \*\*(\d+) работают по содержимому\*\*: (\d+) "
+        r"разбирают само значение,\s+ещё (\d+) —", text)
+    assert match, "в README нет фразы про число правил"
+    total, by_content, by_value, by_ner = (int(g) for g in match.groups())
+    assert total == len(DETECTORS)
+    assert by_value == len(VALUE_DETECTORS)
+    assert by_ner == ner
+    assert by_content == len(VALUE_DETECTORS) + ner
+
+    rest = re.search(r"Оставшиеся (\w+) —", text)
+    words = {"два": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6}
+    assert rest and words.get(rest.group(1)) == total - by_content

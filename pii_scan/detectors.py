@@ -193,7 +193,8 @@ class Detector:
     value_re: Optional[Pattern] = None
     validator: Optional[Callable[[str], bool]] = None
     weight: float = 1.0          # вклад совпадения значений в уверенность
-    name_only: bool = False      # определяется только по имени колонки
+    name_only: bool = False      # у правила нет распознавания по значению
+    name_conclusive: bool = False  # совпадения по имени достаточно для вывода
     whole_value: bool = False    # validator применяется ко всему значению
     external: bool = False       # заполняется извне (NER), не regex
     third_party: bool = False    # ПДн третьих лиц (родственники и т.п.)
@@ -315,7 +316,13 @@ _B = [
         title="свидетельство о рождении",
         category=CAT_COMMON,
         name_re=_n(r"свид.*рожд|birth_?cert|акт.*запис.*рожд"),
-        name_only=True,
+        # Серия римскими цифрами, две буквы кода региона, шесть цифр:
+        # «II-МЮ 123456». Форма своеобразная, спутать почти не с чем. Без
+        # этого правила номер уходил в «почтовый индекс» — шесть цифр же.
+        value_re=re.compile(r"\b[IVX]{1,4}\s?[-–]?\s?[А-ЯЁ]{2}\s?"
+                            r"№?\s?\d{6}\b"),
+        name_conclusive=True,
+        weight=0.6,
     ),
     Detector(
         code="bank_account",
@@ -439,10 +446,14 @@ _E = [
         name_re=_n(r"мест.*рожд|birth_?place|place_?of_?birth|уроженец|"
                    r"mesto_?rozhd"),
         name_only=True,
+        name_conclusive=True,
     ),
 ]
 
-# Блок F — специальные категории (ст. 10 152-ФЗ), только по именам колонок
+# Блок F — специальные категории (ст. 10 152-ФЗ). Значения здесь — обычный
+# текст («русский», «гипертония»), формы, отличимой от любого другого слова,
+# у них нет. Поэтому вывод делается по имени поля; значения при этом читаются
+# и проверяются всеми остальными правилами, как в любой другой колонке.
 
 _F = [
     Detector(
@@ -453,7 +464,17 @@ _F = [
                    r"инвалид|disabilit|наркол|психиатр|беремен|med_?record|"
                    r"мед_?карт|анамнез|госпитал|прививк|vaccin|аллерг|"
                    r"группа_?кров|blood_?type"),
-        name_only=True,
+        # Код МКБ-10 целым значением: «I10», «E11.9». Диагноз словами regex
+        # не отличит от любого другого русского текста, а код — отличит.
+        # Сверка идёт со всем значением: «A01» посреди предложения — это что
+        # угодно, а колонка сплошных таких кодов — уже повод посмотреть.
+        # Вес как у прочих правил без контрольной суммы: колонка, сплошь
+        # состоящая из таких кодов, дотягивает до «требует проверки», а
+        # редкие вкрапления среди артикулов и статусов — нет.
+        value_re=re.compile(r"[A-Z]\d{2}(?:\.\d{1,2})?"),
+        whole_value=True,
+        name_conclusive=True,
+        weight=0.45,
     ),
     Detector(
         code="special_other",
@@ -463,6 +484,7 @@ _F = [
                    r"religion|политич|political|судим|criminal_?record|"
                    r"интимн|\bраса\b|\brace\b|профсоюз|trade_?union"),
         name_only=True,
+        name_conclusive=True,
     ),
 ]
 
@@ -478,6 +500,7 @@ _R = [
                    r"\bkin\b|spouse|emergency_?contact|контакт.*экстрен|"
                    r"\bмать\b|\bотец\b|родител|parent|опекун|guardian"),
         name_only=True,
+        name_conclusive=True,
         third_party=True,
     ),
 ]
