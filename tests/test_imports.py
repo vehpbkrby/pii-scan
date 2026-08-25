@@ -72,3 +72,44 @@ def test_access_report_contains_evidence():
     assert "GRANT SELECT, INSERT, UPDATE ON" in report   # сырое доказательство
     assert "CREATE USER 'pii_reader'" in report          # что просить у DBA
     assert "--allow-rw" in report
+
+
+def test_documented_commands_parse():
+    """Команды из README должны разбираться без ошибок.
+
+    Документация уже расходилась с кодом: перечисляла ключи, которых нет,
+    и категории, которые переименовали. Проверка дешёвая, поэтому пусть
+    падает тест, а не пользователь.
+    """
+    from pii_scan.cli import build_parser
+
+    parser = build_parser()
+    for case in [
+        "--dry-run --details",
+        "--pause-ms 200 --max-minutes 120",
+        "--detectors фио --only prod-mysql",
+        "--detectors фио,контакты",
+        "--detectors snils",
+        "--list-detectors",
+        "--limit 20000 --only prod-postgres --details",
+        "--full-inventory --details",
+        "--limit 100 --no-ner",
+        "--strategy tail",
+        "--formats xlsx",
+        "--no-grouping",
+        "--progress off --pause-ms 200 --max-minutes 120",
+        "--max-qpm 60",
+        "--out /srv/audit/2026-08",
+        "--only prod-postgres --full-inventory --formats xlsx",
+    ]:
+        parser.parse_args(case.split())
+
+
+def test_documented_categories_resolve():
+    """Названия категорий из README должны существовать в каталоге."""
+    from pii_scan.detectors import resolve_detectors
+
+    for name in ["фио", "контакты", "документы", "финансы", "рождение",
+                 "fio", "name", "contacts", "documents", "docs", "finance",
+                 "birth", "snils", "bank_card"]:
+        assert resolve_detectors([name]), f"категория {name} ничего не даёт"
