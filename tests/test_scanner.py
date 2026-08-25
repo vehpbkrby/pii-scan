@@ -322,7 +322,7 @@ def test_weak_signal_is_shown_in_inventory(monkeypatch, app_config):
 
 def test_only_fio_is_searched(monkeypatch, app_config):
     """При выборе одной категории остальные правила не срабатывают."""
-    app_config.scan.detectors = ["фио"]
+    app_config.scan.detectors = ["names"]
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
 
@@ -335,15 +335,28 @@ def test_only_fio_is_searched(monkeypatch, app_config):
     assert fired <= {"fio", "name_part", "ner_person"}
     assert found["f_17"].verdict != "pii"               # СНИЛС не засчитан
     assert result.options["detectors_limited"] is True
-    assert result.options["detectors"] == "фио"
+    # в конфиге латиница, в отчёте — русское название
+    assert result.options["detectors"] == "ФИО"
 
 
-def test_latin_group_name_works(monkeypatch, app_config):
-    app_config.scan.detectors = ["contacts"]
+def test_cyrillic_alias_still_works(monkeypatch, app_config):
+    """Конфиги, написанные до перехода на латиницу, не должны ломаться."""
+    app_config.scan.detectors = ["контакты"]
     result = run(monkeypatch, app_config)
     found = {f.ref.full_column: f for f in result.tables[0].findings}
     assert found["contact"].verdict == "pii"            # email
     assert "last_name" not in found
+
+
+def test_latin_and_cyrillic_are_equivalent():
+    """Русское название и латинское должны давать один и тот же набор."""
+    from pii_scan.detectors import resolve_detectors
+
+    for latin, cyrillic in [("names", "фио"), ("contacts", "контакты"),
+                            ("documents", "документы"), ("finance", "финансы"),
+                            ("birth", "рождение"), ("special", "спецкатегории"),
+                            ("relatives", "родственники")]:
+        assert resolve_detectors([latin]) == resolve_detectors([cyrillic]), latin
 
 
 def test_single_code_can_be_selected(monkeypatch, app_config):

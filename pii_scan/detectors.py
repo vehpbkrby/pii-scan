@@ -496,24 +496,38 @@ NER_CODES = ("ner_person", "ner_location")
 # Группы для настройки: перечислять коды по одному неудобно, а «искать только
 # ФИО» — обычное требование. Названия принимаются и русские, и латиницей.
 DETECTOR_GROUPS: Dict[str, List[str]] = {
-    "фио": ["fio", "name_part", "ner_person"],
-    "контакты": ["email", "phone", "address", "postal_code", "ner_location"],
-    "документы": ["snils", "inn", "oms", "passport_rf", "foreign_passport",
+    "names": ["fio", "name_part", "ner_person"],
+    "contacts": ["email", "phone", "address", "postal_code", "ner_location"],
+    "documents": ["snils", "inn", "oms", "passport_rf", "foreign_passport",
                   "driver_license", "birth_certificate"],
-    "финансы": ["bank_card", "bank_account"],
-    "рождение": ["birth_date", "birth_place"],
-    "спецкатегории": ["health", "special_other"],
-    "родственники": ["relatives"],
+    "finance": ["bank_card", "bank_account"],
+    "birth": ["birth_date", "birth_place"],
+    "special": ["health", "special_other"],
+    "relatives": ["relatives"],
 }
 
-_GROUP_ALIASES = {
-    "fio": "фио", "name": "фио", "names": "фио",
-    "contacts": "контакты", "contact": "контакты",
-    "documents": "документы", "docs": "документы",
-    "finance": "финансы", "financial": "финансы",
+# Названия для отчётов: в конфиге латиница, в документе для проверяющего —
+# русский. Разводить эти две роли проще, чем выбирать между ними.
+GROUP_TITLES: Dict[str, str] = {
+    "names": "ФИО",
+    "contacts": "контакты",
+    "documents": "документы",
+    "finance": "финансы",
     "birth": "рождение",
     "special": "спецкатегории",
-    "relatives": "родственники", "family": "родственники",
+    "relatives": "родственники",
+}
+
+# Русские названия и короткие формы принимаются наравне с основными:
+# конфиги, написанные до перехода на латиницу, продолжают работать.
+_GROUP_ALIASES = {
+    "fio": "names", "name": "names", "фио": "names",
+    "contact": "contacts", "контакты": "contacts",
+    "docs": "documents", "документы": "documents",
+    "financial": "finance", "финансы": "finance",
+    "рождение": "birth",
+    "спецкатегории": "special",
+    "family": "relatives", "родственники": "relatives",
 }
 
 
@@ -555,18 +569,19 @@ def render_detector_list() -> str:
     Источник истины один: сам каталог. Дублировать его в документации
     нельзя, иначе списки разойдутся при первом же изменении.
     """
+    aliases: Dict[str, List[str]] = {}
+    for alias, group in _GROUP_ALIASES.items():
+        aliases.setdefault(group, []).append(alias)
+
     lines = ["Категории (группы правил):", ""]
     for group, codes in DETECTOR_GROUPS.items():
         titles = ", ".join(DETECTORS_BY_CODE[c].title for c in codes
                            if c in DETECTORS_BY_CODE)
-        lines.append(f"  {group:<16} {titles}")
-
-    aliases: Dict[str, List[str]] = {}
-    for alias, group in _GROUP_ALIASES.items():
-        aliases.setdefault(group, []).append(alias)
-    lines += ["", "То же латиницей:", ""]
-    for group, names in aliases.items():
-        lines.append(f"  {group:<16} {', '.join(sorted(names))}")
+        lines.append(f"  {group:<12} {titles}")
+        also = ", ".join(sorted(aliases.get(group, [])))
+        if also:
+            lines.append(f"  {'':<12} также принимается: {also}")
+        lines.append("")
 
     lines += ["", "Отдельные правила (можно указывать поштучно):", ""]
     for code in sorted(DETECTORS_BY_CODE):
@@ -595,7 +610,8 @@ def describe_detectors(active: Set[str]) -> str:
         if c in DETECTORS_BY_CODE
     )
     parts = [
-        name if set(DETECTOR_GROUPS[name]) <= active else f"{name} (частично)"
+        GROUP_TITLES.get(name, name) if set(DETECTOR_GROUPS[name]) <= active
+        else f"{GROUP_TITLES.get(name, name)} (частично)"
         for name in groups
     ]
     return ", ".join(parts + extra) or "ничего не выбрано"

@@ -87,8 +87,8 @@ def test_documented_commands_parse():
     for case in [
         "--dry-run --details",
         "--pause-ms 200 --max-minutes 120",
-        "--detectors фио --only prod-mysql",
-        "--detectors фио,контакты",
+        "--detectors names --only prod-mysql",
+        "--detectors names,contacts",
         "--detectors snils",
         "--list-detectors",
         "--limit 20000 --only prod-postgres --details",
@@ -109,7 +109,7 @@ def test_documented_categories_resolve():
     """Названия категорий из README должны существовать в каталоге."""
     from pii_scan.detectors import resolve_detectors
 
-    for name in ["фио", "контакты", "документы", "финансы", "рождение",
-                 "fio", "name", "contacts", "documents", "docs", "finance",
-                 "birth", "snils", "bank_card"]:
+    for name in ["names", "contacts", "documents", "finance", "birth",
+                 "special", "relatives", "fio", "docs", "financial",
+                 "snils", "bank_card"]:
         assert resolve_detectors([name]), f"категория {name} ничего не даёт"

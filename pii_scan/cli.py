@@ -77,8 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-detectors", action="store_true",
                         help="показать доступные категории и правила и выйти")
     parser.add_argument("--detectors", metavar="СПИСОК",
-                        help="какие категории ПДн искать, через запятую. "
-                             "По умолчанию все; перечень — --list-detectors")
+                        help="какие категории ПДн искать, через запятую, "
+                             "например names,contacts. По умолчанию все; "
+                             "перечень — --list-detectors")
     parser.add_argument("--full-inventory", action="store_true",
                         help="в отчёты попадут все поля всех таблиц, включая "
                              "те, где ПДн не найдены — полная опись")
