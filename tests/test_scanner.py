@@ -452,3 +452,67 @@ def test_weak_signal_shows_count_not_percent():
     f.compute_scores()
     assert f.verdict == "no"                     # колонкой с ПДн не считаем
     assert "1 из 500" in f.summary_kind          # но и не умалчиваем
+
+
+def test_review_bucket_splits_by_basis(monkeypatch, app_config):
+    """«Требует проверки» — это две разные работы, а не одна куча.
+
+    Поле, где сработало содержимое, разбирают глазами. Поле, которое
+    держится на одном своём названии, разбирают вопросом к разработчикам.
+    """
+    from pii_scan.model import ColumnRef, Finding, ScanResult, TableStat
+
+    by_values = Finding(ref=ColumnRef("s", "d", "t1", "c"), non_null=500)
+    by_values.hit("passport_rf").matched = 500
+    by_values.compute_scores()
+
+    by_name = Finding(ref=ColumnRef("s", "d", "t2", "passport_seria"),
+                      non_null=500)
+    by_name.hit("passport_rf").by_name = True
+    by_name.compute_scores()
+
+    assert by_values.verdict == by_name.verdict == "maybe"
+    assert by_values.confirmed_by_values
+    assert not by_name.confirmed_by_values
+
+    result = ScanResult()
+    for finding in (by_values, by_name):
+        stat = TableStat(source="s", database="d",
+                         table=finding.ref.table, rows_total=500)
+        stat.findings = [finding]
+        result.tables.append(stat)
+
+    assert len(result.pending_findings) == 2
+    assert [f.ref.table for f in result.pending_confirmed] == ["t1"]
+    assert [f.ref.table for f in result.pending_by_name] == ["t2"]
+    # подтверждённое содержимым идёт первым — с него начинают разбор
+    assert result.pending_findings[0].ref.table == "t1"
+
+
+def test_pending_field_inside_pii_table_is_counted():
+    """Поле на разбор не должно теряться из-за соседей по таблице.
+
+    `maybe_tables` — это таблицы, о которых не известно вообще ничего. Если
+    считать разбор по ним, то `passport_seria` в таблице, где ФИО уже
+    нашлись, в сводку не попадёт: таблица-то давно «с ПДн». Разбирать поле
+    от этого не перестанут.
+    """
+    from pii_scan.model import ColumnRef, Finding, ScanResult, TableStat
+
+    confident = Finding(ref=ColumnRef("s", "d", "clients", "fio"), non_null=500)
+    confident.hit("fio").matched = 500
+    confident.compute_scores()
+
+    pending = Finding(ref=ColumnRef("s", "d", "clients", "passport_seria"),
+                      non_null=500)
+    pending.hit("passport_rf").by_name = True
+    pending.compute_scores()
+
+    stat = TableStat(source="s", database="d", table="clients", rows_total=500)
+    stat.findings = [confident, pending]
+    result = ScanResult()
+    result.tables.append(stat)
+
+    assert result.maybe_tables == []            # таблица уже числится с ПДн
+    assert len(result.pending_findings) == 1    # а поле всё равно на разборе
+    assert result.pending_by_name[0].ref.column == "passport_seria"

@@ -27,6 +27,7 @@ def finding_to_dict(finding: Finding) -> Dict[str, Any]:
         "categories": finding.categories,
         "third_party": finding.third_party,
         "basis": finding.basis,
+        "confirmed_by_values": finding.confirmed_by_values,
         "inferred_from": finding.inferred_from,
         "detectors": [
             {
@@ -71,6 +72,9 @@ def result_to_dict(result: ScanResult) -> Dict[str, Any]:
         "summary": {
             "tables_with_pii": len(result.pii_tables),
             "tables_to_review": len(result.maybe_tables),
+            "columns_to_review": len(result.pending_findings),
+            "columns_to_review_confirmed": len(result.pending_confirmed),
+            "columns_to_review_by_name": len(result.pending_by_name),
             "columns_with_pii": sum(
                 len(t.pii_findings) for t in result.tables),
             "tables_with_special": sum(

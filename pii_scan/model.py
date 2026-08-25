@@ -207,6 +207,18 @@ class Finding:
         return f"{matched}/{self.non_null}"
 
     @property
+    def confirmed_by_values(self) -> bool:
+        """Подтвердило ли вывод само содержимое колонки.
+
+        Разбирать «требует проверки» по одному вердикту неудобно: поле, где
+        нашлась половина телефонов, и поле, которое держится на одном своём
+        названии, требуют совершенно разной работы от того, кто их разбирает.
+        Первое — посмотреть глазами, второе — выяснить у разработчиков, что
+        там вообще лежит.
+        """
+        return any(self.hits[c].matched for c in self.codes if c in self.hits)
+
+    @property
     def basis(self) -> str:
         """Основание вывода — для колонки «Основание» в реестре."""
         if self.inferred_from:
@@ -304,6 +316,38 @@ class ScanResult:
             [t for t in self.tables if not t.pii_findings and t.maybe_findings],
             key=lambda t: (-t.score, t.qualified),
         )
+
+    @property
+    def pending_findings(self) -> List[Finding]:
+        """Все поля на ручной разбор — во всех таблицах, а не только в
+        `maybe_tables`.
+
+        Счёт по таблицам обманчив: `maybe_tables` — это таблицы, о которых
+        пока не известно вообще ничего. Поле, ждущее разбора внутри таблицы,
+        где ПДн уже нашлись, в этот счёт не попадает и потому теряется —
+        а разбирать его всё равно придётся.
+        """
+        return sorted(
+            (f for t in self.tables for f in t.maybe_findings),
+            key=lambda f: (not f.confirmed_by_values, -f.score,
+                           f.ref.qualified),
+        )
+
+    @property
+    def pending_confirmed(self) -> List[Finding]:
+        """Поля, где вывод подтвердило само содержимое — смотреть глазами."""
+        return [f for f in self.pending_findings if f.confirmed_by_values]
+
+    @property
+    def pending_by_name(self) -> List[Finding]:
+        """Поля, держащиеся только на своём названии.
+
+        Обычно это разрыв в правилах, а не ложное срабатывание: паспорт,
+        разнесённый на серию и номер по двум колонкам, ни в одной из них не
+        выглядит паспортом. Смотреть тут не на что — это вопрос к
+        разработчикам, что в поле лежит.
+        """
+        return [f for f in self.pending_findings if not f.confirmed_by_values]
 
     @property
     def all_findings(self) -> List[Finding]:

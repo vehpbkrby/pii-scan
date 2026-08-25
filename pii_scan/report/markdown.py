@@ -88,9 +88,18 @@ def render_summary(result: ScanResult) -> str:
         f"**{sum(1 for t in pii if t.has_special)}**",
         f"* Из них с данными третьих лиц (родственники): "
         f"**{sum(1 for t in pii if t.third_party)}**",
-        f"* Таблиц, требующих ручной проверки: **{len(result.maybe_tables)}**",
-        "",
+        f"* Таблиц, о которых ничего не известно: "
+        f"**{len(result.maybe_tables)}**",
+        f"* Полей на ручной разбор: **{len(result.pending_findings)}**",
     ]
+    if result.pending_findings:
+        lines += [
+            f"  * подтверждено значениями (смотреть содержимое): "
+            f"**{len(result.pending_confirmed)}**",
+            f"  * держатся только на имени поля (вопрос к разработчикам): "
+            f"**{len(result.pending_by_name)}**",
+        ]
+    lines.append("")
 
     if pii:
         lines += [
@@ -118,14 +127,24 @@ def render_summary(result: ScanResult) -> str:
             "Сигналов недостаточно для однозначного вывода — "
             "проверьте содержимое вручную.",
             "",
-            "| Источник | Таблица | Предположительно | Уверенность |",
-            "|---|---|---|---|",
+            "Колонка «На чём держится» говорит, кому отдавать разбор. "
+            "**Значения** — посмотрите содержимое глазами. **Только имя "
+            "поля** — содержимое ни на что не похоже, спрашивайте у "
+            "разработчиков, что там лежит: так выглядит, например, паспорт, "
+            "разнесённый на серию и номер по двум колонкам.",
+            "",
+            "| Источник | Таблица | Предположительно | На чём держится | Уверенность |",
+            "|---|---|---|---|---|",
         ]
         for table in result.maybe_tables:
             kinds = sorted({t for f in table.maybe_findings for t in f.titles})
+            reason = ("значения"
+                      if any(f.confirmed_by_values for f in table.maybe_findings)
+                      else "только имя поля")
             lines.append(
                 f"| {table.source} | `{table.qualified}` | "
-                f"{_escape(', '.join(kinds))} | {_fmt_score(table.score)} |"
+                f"{_escape(', '.join(kinds))} | {reason} | "
+                f"{_fmt_score(table.score)} |"
             )
         lines.append("")
 

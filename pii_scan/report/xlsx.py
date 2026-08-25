@@ -112,11 +112,14 @@ def write_xlsx(result: ScanResult, path: str) -> None:
     autosize(ws)
 
     # --- Требует проверки ---
+    # Сначала те, где сработало содержимое: их разбирают глазами. Ниже —
+    # держащиеся на одном имени поля: там смотреть не на что, вопрос к
+    # разработчикам. Различить их можно и по колонке «Основание», но
+    # вперемешку список читается как одна общая куча работы.
     ws = wb.create_sheet("Требует проверки")
     setup(ws, REGISTRY_HEADER)
-    for table in result.tables:
-        for finding in table.maybe_findings:
-            ws.append(_row(finding, types.get(finding.ref.source, "")))
+    for finding in result.pending_findings:
+        ws.append(_row(finding, types.get(finding.ref.source, "")))
     autosize(ws)
 
     # --- Все поля (только в режиме полной описи) ---
@@ -172,6 +175,9 @@ def write_xlsx(result: ScanResult, path: str) -> None:
                if result.options.get("dry_run") else "выборка значений"])
     ws.append(["Таблиц с ПДн", len(result.pii_tables)])
     ws.append(["Таблиц на проверку", len(result.maybe_tables)])
+    ws.append(["Полей на ручной разбор", len(result.pending_findings)])
+    ws.append(["  подтверждено значениями", len(result.pending_confirmed)])
+    ws.append(["  только по имени поля", len(result.pending_by_name)])
     autosize(ws)
 
     wb.save(path)

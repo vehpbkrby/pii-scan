@@ -29,6 +29,13 @@ def _kinds(table: TableStat, limit: int = 4) -> str:
     return text + (f" (+{len(kinds) - limit})" if len(kinds) > limit else "")
 
 
+def _reason(table: TableStat) -> str:
+    """На чём держится пограничный вывод — от этого зависит, кому его отдавать."""
+    if any(f.confirmed_by_values for f in table.maybe_findings):
+        return "значения"
+    return "только имя поля"
+
+
 def render_details(result: ScanResult) -> str:
     """Разбивка по полям — то, что передают разработчикам на проверку.
 
@@ -112,7 +119,14 @@ def render(result: ScanResult) -> str:
     out.append(f"  Таблиц с ПДн:            {len(pii)}")
     out.append(f"  Из них спецкатегории:    {sum(1 for t in pii if t.has_special)}")
     out.append(f"  Из них третьи лица:      {sum(1 for t in pii if t.third_party)}")
-    out.append(f"  Требуют проверки:        {len(result.maybe_tables)}")
+    pending = result.pending_findings
+    out.append(f"  Требуют проверки:        {len(result.maybe_tables)} "
+               f"табл. / {len(pending)} полей")
+    if pending:
+        out.append(f"    подтверждено значениями: "
+                   f"{len(result.pending_confirmed)}")
+        out.append(f"    только по имени поля:    "
+                   f"{len(result.pending_by_name)}")
     out.append(f"  Длительность:            {result.duration_sec} с")
     if result.options.get("detectors_limited"):
         out.append(f"  Искали только:           "
@@ -134,11 +148,12 @@ def render(result: ScanResult) -> str:
 
     if result.maybe_tables:
         rows = [
-            [t.qualified, _kinds(t), f"{t.score:.0%}"]
+            [t.qualified, _kinds(t), _reason(t), f"{t.score:.0%}"]
             for t in result.maybe_tables[:MAX_ROWS]
         ]
         out.append("ТРЕБУЮТ РУЧНОЙ ПРОВЕРКИ")
-        out.append(_table(rows, ["Таблица", "Предположительно", "Увер."]))
+        out.append(_table(rows, ["Таблица", "Предположительно", "На чём держится",
+                                 "Увер."]))
         if len(result.maybe_tables) > MAX_ROWS:
             out.append(f"  … ещё {len(result.maybe_tables) - MAX_ROWS}")
         out.append("")
