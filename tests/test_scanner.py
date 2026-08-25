@@ -678,8 +678,8 @@ def test_name_boost_is_configurable(monkeypatch, app_config):
 def test_registry_sheets_are_split_by_verdict(tmp_path, monkeypatch, app_config):
     """Каждый лист реестра — один вердикт, поэтому колонки «вердикт» в нём нет.
 
-    Разделение и есть ответ на вопрос «где окончательный вывод»: «Реестр» —
-    находки, «Требует проверки» — материал для разбора.
+    Названия листов — предикаты поля: «Содержит ПДн» — окончательный вывод,
+    «Требует проверки» — материал для разбора.
     """
     pytest.importorskip("openpyxl")
     import openpyxl
@@ -691,7 +691,7 @@ def test_registry_sheets_are_split_by_verdict(tmp_path, monkeypatch, app_config)
     write_xlsx(result, str(path))
     wb = openpyxl.load_workbook(path)
 
-    assert wb.sheetnames[0] == "Реестр"          # книга открывается на выводе
+    assert wb.sheetnames[0] == "Содержит ПДн"    # книга открывается на выводе
     assert "Требует проверки" in wb.sheetnames
     assert "Сводка" in wb.sheetnames
 
@@ -701,7 +701,7 @@ def test_registry_sheets_are_split_by_verdict(tmp_path, monkeypatch, app_config)
         return {f.verdict for t in result.tables for f in t.findings
                 if f.ref.full_column in names}
 
-    assert verdicts("Реестр") == {"pii"}
+    assert verdicts("Содержит ПДн") == {"pii"}
     assert verdicts("Требует проверки") == {"maybe"}
 
     # расшифровка листов лежит в «Сводке» — иначе по названиям не понять
