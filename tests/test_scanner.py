@@ -417,3 +417,38 @@ def test_opaque_column_found_by_values_alone(monkeypatch, app_config):
     hit = found["field_23"].hits["health"]
     assert not hit.by_name          # имя не дало ни одного очка
     assert hit.matched == 3         # вывод целиком построен на значениях
+
+
+def test_score_follows_share_of_matched_values():
+    """Единичное попадание и сплошная колонка не должны весить одинаково.
+
+    Одно значение из пятисот — скорее опечатка в чужом поле; 485 из 500 —
+    поле для того и заведено. Между ними должна быть не разница в оттенке,
+    а разные вердикты.
+    """
+    from pii_scan.model import ColumnRef, Finding
+
+    def verdict(matched):
+        f = Finding(ref=ColumnRef("s", "d", "t", "c"), non_null=500)
+        f.hit("snils").matched = matched
+        f.compute_scores()
+        return f.verdict, f.score
+
+    assert verdict(1)[0] == "no"
+    assert verdict(100)[0] == "no"
+    assert verdict(250)[0] == "maybe"
+    assert verdict(485)[0] == "pii"
+    # оценка растёт строго монотонно вместе с долей
+    scores = [verdict(m)[1] for m in (1, 100, 250, 485, 500)]
+    assert scores == sorted(scores) and len(set(scores)) == len(scores)
+
+
+def test_weak_signal_shows_count_not_percent():
+    """У одного попадания из пятисот процент вырождается в «0%»."""
+    from pii_scan.model import ColumnRef, Finding
+
+    f = Finding(ref=ColumnRef("s", "d", "t", "c"), non_null=500)
+    f.hit("snils").matched = 1
+    f.compute_scores()
+    assert f.verdict == "no"                     # колонкой с ПДн не считаем
+    assert "1 из 500" in f.summary_kind          # но и не умалчиваем

@@ -167,10 +167,21 @@ class Finding:
             if 0 < score < VERDICT_MAYBE and code in DETECTORS_BY_CODE
         ]
         weak.sort(key=lambda item: -item[1])
-        return [
-            f"{DETECTORS_BY_CODE[code].title} ({score:.0%})"
-            for code, score in weak[:2]
-        ]
+        titles = []
+        for code, score in weak[:2]:
+            title = DETECTORS_BY_CODE[code].title
+            hit = self.hits.get(code)
+            matched = hit.matched if hit else 0
+            if matched:
+                # У единичного попадания процент вырождается в «0%», а весь
+                # смысл как раз в счёте: одно значение из пятисот — скорее
+                # опечатка в чужом поле, чем колонка с ПДн. Но знать о нём
+                # оператору надо, поэтому показываем не долю, а сколько.
+                denominator = hit.examined or self.non_null
+                titles.append(f"{title} ({matched} из {denominator})")
+            else:
+                titles.append(f"{title} ({score:.0%})")
+        return titles
 
     @property
     def summary_kind(self) -> str:
