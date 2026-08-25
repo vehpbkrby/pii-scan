@@ -112,7 +112,16 @@ class PostgresSource(Source):
     def connect(self) -> None:
         # Входная база: явно заданная первой в конфиге либо служебная postgres
         self._entry_db = (self.config.databases or ["postgres"])[0]
-        self._conns[self._entry_db] = self._connect_to(self._entry_db)
+        try:
+            self._conns[self._entry_db] = self._connect_to(self._entry_db)
+        except SourceError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — отказ драйвера, а не сбой
+            raise self.connect_error(
+                exc,
+                f"  * если база называется иначе, укажите её в databases: "
+                f"сейчас вход идёт через '{self._entry_db}'"
+            ) from exc
         self._conn = self._conns[self._entry_db]
         log.info("[%s] подключение к PostgreSQL %s:%s/%s установлено (%s)",
                  self.name, self.config.host, self.config.port,

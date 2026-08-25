@@ -213,22 +213,43 @@ def test_noisy_drivers_are_silenced():
         assert logging.getLogger(name).level == logging.CRITICAL, name
 
 
-def test_clickhouse_timeout_message_is_actionable():
-    """«Code: 209» ничего не говорит о причине и о том, что делать."""
+def test_connect_error_names_the_cause():
+    """Сырое исключение драйвера не говорит ни причины, ни что делать.
+
+    Три сетевых отказа выглядят похоже, а означают разное: таймаут — пакеты
+    уходят без ответа, отказ — порт закрыт, DNS — имя не разрешилось.
+    """
     from pii_scan.config import ScanOptions, SourceConfig
     from pii_scan.sources.clickhouse import ClickHouseSource
+    from pii_scan.sources.mysql import MySQLSource
 
-    src = ClickHouseSource(
+    ch = ClickHouseSource(
         SourceConfig(name="prod", type="clickhouse", host="10.0.0.20",
                      port=9000, user="pii_reader"),
         ScanOptions(),
     )
-    hint = src._connect_hint(Exception("Code: 209. (10.0.0.20:9000)"))
+    timeout = str(ch.connect_error(Exception("Code: 209. (10.0.0.20:9000)"),
+                                   ch._port_hint()))
+    assert "10.0.0.20:9000" in timeout
+    assert "истёк таймаут" in timeout
+    assert "межсетевом экране" in timeout
+    assert "nc -zv 10.0.0.20 8123" in timeout       # второй порт ClickHouse
+    assert "контейнере" in timeout                  # своя сеть у контейнера
 
-    assert "10.0.0.20:9000" in hint
-    assert "таймаут" in hint
-    assert "nc -zv 10.0.0.20 8123" in hint     # подсказка про второй порт
-    assert "межсетевым экраном" in hint
+    my = MySQLSource(
+        SourceConfig(name="prod", type="mysql", host="db.corp.ru", port=3306,
+                     user="pii_reader"),
+        ScanOptions(),
+    )
+    raw = "(2003, \"Can't connect to MySQL server on 'db.corp.ru' (timed out)\")"
+    assert "истёк таймаут" in str(my.connect_error(Exception(raw)))
 
-    bad_pwd = src._connect_hint(Exception("Authentication failed"))
-    assert "логин или пароль" in bad_pwd and "pii_reader" in bad_pwd
+    refused = str(my.connect_error(OSError("[Errno 111] Connection refused")))
+    assert "отклонено" in refused and "не слушает" in refused
+
+    dns = str(my.connect_error(OSError("Name or service not known")))
+    assert "не разрешается" in dns and "getent hosts db.corp.ru" in dns
+
+    denied = str(my.connect_error(Exception(
+        "(1045, \"Access denied for user 'pii_reader'@'10.0.0.1'\")")))
+    assert "не принята" in denied and "pii_reader" in denied

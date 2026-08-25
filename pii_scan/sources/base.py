@@ -10,7 +10,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, NamedTuple, Optional, Sequence
 
 from ..config import ScanOptions, SourceConfig
 
@@ -47,6 +47,53 @@ class SourceError(Exception):
 
 class ReadWriteAccessError(SourceError):
     """У учётной записи есть права на изменение данных."""
+
+
+# --- разбор отказов подключения ---------------------------------------------
+
+_IMAGE = "pii-scan:full"
+
+_AUTH_MARKERS = (
+    "access denied", "authentication failed", "auth failed",
+    "password authentication", "wrong password", "not allowed to connect",
+)
+# «database » само по себе слишком широко: слово встречается и в сетевых
+# сообщениях, а проверка идёт раньше разбора сети.
+_DB_MARKERS = ('unknown database', 'database "', "does not exist")
+
+
+class _NetworkKind(NamedTuple):
+    summary: str
+    detail: str
+    dns: bool = False
+
+
+def _network_kind(low: str) -> Optional[_NetworkKind]:
+    """Три сетевых отказа выглядят похоже, а означают разное."""
+    if any(m in low for m in ("name or service not known", "nodename nor",
+                              "name resolution", "getaddrinfo",
+                              "unknown host", "could not translate host")):
+        return _NetworkKind(
+            "имя хоста не разрешается",
+            "DNS не вернул адрес. Сканер работает в контейнере: он не "
+            "наследует /etc/hosts и resolv.conf хоста.",
+            dns=True,
+        )
+    if "refused" in low:
+        return _NetworkKind(
+            "соединение отклонено",
+            "Хост ответил, но порт закрыт: служба не слушает его либо "
+            "слушает только на localhost.",
+        )
+    if any(m in low for m in ("timed out", "timeout", "unreachable",
+                              "no route to host")):
+        return _NetworkKind(
+            "соединение не установлено, истёк таймаут",
+            "Пакеты уходят без ответа. Так выглядит блокировка на "
+            "межсетевом экране или отсутствие маршрута — отказ пришёл бы "
+            "мгновенно.",
+        )
+    return None
 
 
 @dataclass
@@ -214,6 +261,60 @@ class Source(ABC):
         entry = f"{table.display_name} ({reason})"
         if entry not in self.unreadable:
             self.unreadable.append(entry)
+
+    # --- разбор отказов подключения ---------------------------------------
+
+    def error_text(self, exc: Exception) -> str:
+        """Текст исключения драйвера в одну строку.
+
+        Адаптер переопределяет, когда драйвер сообщает причину числовым
+        кодом вместо слов.
+        """
+        return " ".join(str(exc).split())
+
+    def connect_error(self, exc: Exception, extra: str = "") -> "SourceError":
+        """Причина отказа вместо сырого исключения драйвера.
+
+        Драйверы сообщают об одном и том же по-разному: PyMySQL отдаёт кортеж
+        `(2003, "Can't connect ... (timed out)")`, psycopg — многострочный
+        текст, clickhouse-driver — «Code: 209». Читателю нужно одно: что
+        именно не сложилось и куда смотреть.
+        """
+        cfg = self.config
+        text = self.error_text(exc)
+        where = f"{cfg.host}:{cfg.port}"
+        low = text.lower()
+
+        if any(m in low for m in _AUTH_MARKERS):
+            return SourceError(
+                f"{where}: учётная запись '{cfg.user}' не принята — неверный "
+                f"пароль либо вход с этого адреса не разрешён.\n"
+                f"Драйвер сообщает: {text}"
+            )
+        if any(m in low for m in _DB_MARKERS):
+            return SourceError(
+                f"{where}: база из конфига недоступна учётной записи "
+                f"'{cfg.user}'.\nДрайвер сообщает: {text}"
+            )
+
+        kind = _network_kind(low)
+        if not kind:
+            return SourceError(f"{where}: {text}")
+
+        lines = [f"{where}: {kind.summary}", kind.detail, "Что проверить:"]
+        if kind.dns:
+            lines.append(f"  1) имя разрешается ли из контейнера: "
+                         f"docker run --rm {_IMAGE} getent hosts {cfg.host}")
+        else:
+            lines.append(f"  1) доступен ли порт:  nc -zv {cfg.host} {cfg.port}")
+        lines.append("  2) сканер работает в контейнере — у него своя сеть, "
+                     "свой DNS и свои маршруты. С хоста база может быть "
+                     "видна, а из контейнера нет")
+        lines.append("     см. «Подключение по сети» в README")
+        if extra:
+            lines.append(extra)
+        lines.append(f"  3) правила межсетевого экрана до {cfg.host}")
+        return SourceError("\n".join(lines))
 
     def sample_parts(self, limit: int, has_order_key: bool) -> List[tuple]:
         """Разбивает выборку на части: [(сколько строк, читать ли с конца)].

@@ -73,6 +73,14 @@ class MySQLSource(Source):
     type = "mysql"
 
     def connect(self) -> None:
+        try:
+            self._connect()
+        except SourceError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — отказ драйвера, а не сбой
+            raise self.connect_error(exc) from exc
+
+    def _connect(self) -> None:
         cfg = self.config
         timeout = max(self.options.query_timeout, 5)
         try:

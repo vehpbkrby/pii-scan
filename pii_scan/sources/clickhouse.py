@@ -152,32 +152,26 @@ class ClickHouseSource(Source):
     def _verify_connection(self) -> None:
         try:
             self._query("SELECT 1")
+        except SourceError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise SourceError(self._connect_hint(exc)) from exc
+            raise self.connect_error(exc, self._port_hint()) from exc
 
-    def _connect_hint(self, exc: Exception) -> str:
-        """Понятная причина вместо «Code: 209»."""
+    def error_text(self, exc: Exception) -> str:
+        # ClickHouse сообщает о таймауте сокета кодом 209 без слов.
+        text = _short_error(exc)
+        if "Code: 209" in text:
+            text += " (timed out)"
+        return text
+
+    def _port_hint(self) -> str:
+        """У ClickHouse два порта, и перепутанный — частая причина отказа."""
         cfg = self.config
-        text = str(exc)
-        where = f"{cfg.host}:{cfg.port}"
-        if "timed out" in text.lower() or "Code: 209" in text:
-            other = "8123" if cfg.port in NATIVE_PORTS else "9000"
-            proto = "нативный" if cfg.port in NATIVE_PORTS else "HTTP"
-            lines = [
-                f"{where} не отвечает: соединение оборвалось по таймауту "
-                f"({max(self.options.query_timeout, 5)} с).",
-                f"Порт {cfg.port} — это {proto} протокол ClickHouse. Сервер "
-                f"может его не слушать, или порт закрыт межсетевым экраном.",
-                "Что проверить:",
-                f"  1) доступен ли порт:   nc -zv {cfg.host} {cfg.port}",
-                f"  2) второй порт:        nc -zv {cfg.host} {other}"
-                f"  — если открыт он, укажите port: {other} в конфиге",
-                "  3) listen_host в конфигурации сервера и правила сети до него",
-            ]
-            return "\n".join(lines)
-        if "uthentication" in text or "AUTHENTICATION_FAILED" in text:
-            return f"{where}: неверный логин или пароль для '{cfg.user}'"
-        return f"{where}: {text}"
+        other = "8123" if cfg.port in NATIVE_PORTS else "9000"
+        proto = "нативный" if cfg.port in NATIVE_PORTS else "HTTP"
+        return (f"  * порт {cfg.port} — {proto} протокол ClickHouse. "
+                f"Проверьте второй: nc -zv {cfg.host} {other} — если открыт "
+                f"он, укажите port: {other} в конфиге")
 
     def _connect_http(self, settings: dict) -> None:
         cfg = self.config
