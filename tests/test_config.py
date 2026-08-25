@@ -86,3 +86,42 @@ def test_bad_strategy_and_progress(tmp_path, monkeypatch):
         load_config(write(tmp_path, "scan:\n  sample_strategy: середина\n" + MINIMAL))
     with pytest.raises(ConfigError, match="progress"):
         load_config(write(tmp_path, "scan:\n  progress: иногда\n" + MINIMAL))
+
+
+def test_commented_source_blocks_work_when_uncommented(tmp_path, monkeypatch):
+    """Закомментированный блок, который не заводится, хуже отсутствующего.
+
+    Раскомментируем каждый заготовленный источник из config.example.yml и
+    прогоняем через настоящую загрузку конфига: опечатка в отступах или
+    устаревший ключ обнаружатся здесь, а не у того, кто снял решётки.
+    """
+    from pathlib import Path
+
+    from pii_scan.config import load_config
+
+    for var in ("MYSQL_PWD", "PG_PWD", "CH_PWD"):
+        monkeypatch.setenv(var, "пароль")
+
+    example = (Path(__file__).resolve().parents[1] / "config.example.yml"
+               ).read_text(encoding="utf-8").split("\n")
+
+    def uncomment(marker: str) -> str:
+        start = next(i for i, l in enumerate(example) if marker in l)
+        out = list(example[:start])
+        for line in example[start:]:
+            if not line.strip():            # блок кончился пустой строкой
+                out.append(line)
+                break
+            out.append(line.replace("  # ", "  ", 1))
+        out += example[start + len(out) - start:]
+        return "\n".join(out)
+
+    for marker, expect_type in (("- name: prod-postgres", "postgres"),
+                                ("- name: prod-clickhouse", "clickhouse")):
+        path = tmp_path / f"{expect_type}.yml"
+        path.write_text(uncomment(marker), encoding="utf-8")
+        config = load_config(str(path))
+        names = {s.name: s for s in config.sources}
+        assert f"prod-{expect_type}" in names, expect_type
+        assert names[f"prod-{expect_type}"].type == expect_type
+        assert names[f"prod-{expect_type}"].user == "pii_reader"

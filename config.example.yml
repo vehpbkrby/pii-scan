@@ -47,6 +47,13 @@ throttle:
   max_duration_min: 0         # бюджет времени, 0 = без ограничения
 
 sources:
+  # Активен один источник — MySQL. Блоки PostgreSQL и ClickHouse ниже
+  # закомментированы целиком: раскомментируйте нужный и впишите свои
+  # значения. Источников может быть сколько угодно, они обследуются
+  # последовательно в одном прогоне.
+  #
+  # Пароли сюда не пишутся: ${VAR} берётся из .env.
+
   - name: prod-mysql
     type: mysql
     host: 10.0.0.10
@@ -54,7 +61,7 @@ sources:
     user: pii_reader
     password: ${MYSQL_PWD}
     secure: false                 # true — соединяться по TLS
-    # ssl_ca: /config/ca.pem      # корневой сертификат (путь внутри контейнера)
+    # ssl_ca: /config/ca.pem      # корневой сертификат (путь ВНУТРИ контейнера)
     # ssl_verify: true            # false — не проверять сертификат сервера
     databases: []                 # пусто = все, кроме системных
     exclude_databases: []
@@ -63,39 +70,63 @@ sources:
       - '_archive$'
       - '^tmp_'
     skip_views: true
-    # settings:                 # переменные сессии MySQL
-    #   max_execution_time: 5000
+    # settings:                   # переменные сессии MySQL
+    #   max_execution_time: 5000  # мс
 
-  - name: prod-postgres
-    type: postgres
-    host: 10.0.0.15
-    port: 5432
-    user: pii_reader
-    password: ${PG_PWD}
-    secure: false               # true — sslmode=verify-full
-    # Пусто = все базы, к которым разрешено подключаться. В PostgreSQL нет
-    # межбазовых запросов, поэтому на каждую базу открывается своё соединение.
-    databases: []
-    # settings:                 # параметры сессии PostgreSQL
-    #   work_mem: '32MB'
+  # --- PostgreSQL ------------------------------------------------------
+  # Раскомментируйте блок целиком (снимите «# » с начала строк) и впишите
+  # адрес, учётную запись и имя переменной с паролем.
+  #
+  # Права выдаются В КАЖДОЙ обследуемой базе отдельно: межбазовых запросов
+  # в PostgreSQL нет, поэтому на каждую базу открывается своё соединение.
+  # SQL для выдачи прав — в README, раздел «Доступ к базам».
+  #
+  # - name: prod-postgres
+  #   type: postgres
+  #   host: 10.0.0.15
+  #   port: 5432
+  #   user: pii_reader
+  #   password: ${PG_PWD}
+  #   secure: false               # true — sslmode=verify-full
+  #   # ssl_ca: /config/ca.pem
+  #   # ssl_verify: true
+  #   # Пусто = все базы, к которым разрешено подключаться. Первая в списке
+  #   # используется как входная — через неё сканер получает перечень
+  #   # остальных. Если оставить пусто, вход идёт через базу postgres.
+  #   databases: []
+  #   exclude_databases: []
+  #   include_tables: []          # regex; пусто = все
+  #   exclude_tables:
+  #     - '_archive$'
+  #     - '^tmp_'
+  #   skip_views: true            # материализованные представления тоже
+  #   # settings:                 # параметры сессии PostgreSQL
+  #   #   work_mem: '32MB'
 
-  - name: prod-clickhouse
-    type: clickhouse
-    host: 10.0.0.20
-    port: 8123                    # HTTP; для clickhouse-driver будет 9000
-    user: pii_reader
-    password: ${CH_PWD}
-    secure: false                 # true — HTTPS (порт обычно 8443)
-    # ssl_ca: /config/ca.pem
-    # ssl_verify: true
-    databases: []
-    exclude_tables:
-      - '^\.inner'
-    # Distributed и Merge пропускаются по умолчанию: иначе те же данные
-    # попадут в отчёт по нескольку раз. Чтобы сканировать их — задайте
-    # пустой список.
-    skip_engines: [Distributed, Merge, Null, View, MaterializedView]
-    # settings:                 # родные ограничители ClickHouse
-    #   max_bytes_to_read: 100000000
-    #   max_execution_speed_bytes: 20000000
-    #   priority: 10
+  # --- ClickHouse ------------------------------------------------------
+  # Порт выбирает драйвер: 8123/8443 — HTTP, 9000/9440 — нативный протокол.
+  # Если сервер отвечает по одному, а в конфиге стоит другой, соединение
+  # уйдёт в таймаут — сканер об этом скажет и подскажет второй порт.
+  #
+  # - name: prod-clickhouse
+  #   type: clickhouse
+  #   host: 10.0.0.20
+  #   port: 8123
+  #   user: pii_reader
+  #   password: ${CH_PWD}
+  #   secure: false               # true — HTTPS (порт обычно 8443)
+  #   # ssl_ca: /config/ca.pem
+  #   # ssl_verify: true
+  #   databases: []
+  #   exclude_tables:
+  #     - '^\.inner'
+  #   # Distributed и Merge читают те же данные из других таблиц — без
+  #   # пропуска одни и те же ПДн попадут в отчёт по нескольку раз.
+  #   # Потоковые движки (Kafka, RabbitMQ, NATS, FileLog, S3Queue)
+  #   # добавляются к этому списку всегда и отсюда не убираются.
+  #   skip_engines: [Distributed, Merge, Null, View, MaterializedView]
+  #   # settings:                 # родные ограничители ClickHouse
+  #   #   max_bytes_to_read: 100000000
+  #   #   max_execution_speed_bytes: 20000000
+  #   #   max_memory_usage: 1000000000
+  #   #   priority: 10
