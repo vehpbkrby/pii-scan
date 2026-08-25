@@ -50,6 +50,7 @@ class Scanner:
             enabled=self.options.ner and ner_needed and not self.options.dry_run)
         self.pacer = Pacer(config.throttle)
         self.result = ScanResult()
+        self.excluded_by_filter = 0
 
     # --- точка входа ------------------------------------------------------
 
@@ -65,6 +66,8 @@ class Scanner:
             "detectors_limited": len(self.active) < len(resolve_detectors([])),
             "dry_run": self.options.dry_run,
             "examples_per_hit": self.options.examples_per_hit,
+            "confirmed_only": self.options.confirmed_only,
+            "name_boost": self.options.name_boost,
             "show_values": self.options.show_values,
             "scan_json": self.options.scan_json,
             "ner": self.options.ner,
@@ -88,6 +91,13 @@ class Scanner:
         self.result.finished_at = datetime.now(timezone.utc).astimezone().isoformat(
             timespec="seconds")
         self.result.duration_sec = round(time.monotonic() - started, 1)
+        self.result.options["excluded_by_filter"] = self.excluded_by_filter
+        if self.excluded_by_filter:
+            self._warn(
+                f"--confirmed-only: из отчёта исключено находок, у которых "
+                f"основание — одно имя поля: {self.excluded_by_filter}. "
+                f"Отчёт не является полным обследованием."
+            )
         return self.result
 
     # --- источник ---------------------------------------------------------
@@ -212,7 +222,7 @@ class Scanner:
                 hits=deepcopy(source_finding.hits),
                 inferred_from=item.representative,
             )
-            clone.compute_scores()
+            clone.compute_scores(self.options.name_boost)
             stat.findings.append(clone)
         stat.findings.sort(key=lambda f: (-f.score, f.ref.full_column))
         return stat
@@ -260,13 +270,23 @@ class Scanner:
             self._analyze_sample(source, table, sample, findings)
 
         for finding in findings.values():
-            finding.compute_scores()
+            finding.compute_scores(self.options.name_boost)
+
+        if self.options.confirmed_only:
+            # Упрощённый отчёт: остаётся только то, что подтвердило само
+            # содержимое. Исключённое не пропадает молча — считаем и
+            # объявляем в сводке, иначе урезанный отчёт неотличим от
+            # чистой базы.
+            for finding in findings.values():
+                if finding.verdict != "no" and not finding.confirmed_by_values:
+                    finding.excluded = True
+                    self.excluded_by_filter += 1
 
         # В режиме полной описи в отчёт идут все поля, включая чистые: это
         # доказательство, что проверено всё, а не выборочно.
         stat.findings = [
             f for f in findings.values()
-            if f.hits or self.options.full_inventory
+            if (f.hits and not f.excluded) or self.options.full_inventory
         ]
         stat.findings.sort(key=lambda f: (-f.score, f.ref.full_column))
         return stat
@@ -314,7 +334,7 @@ class Scanner:
                     finding.hits[code].examined = ner_examined
 
             for virtual in json_paths.values():
-                virtual.compute_scores()
+                virtual.compute_scores(self.options.name_boost)
                 findings[virtual.ref.full_column] = virtual
 
     def _ner_targets(self, values: List[str]) -> set:

@@ -621,3 +621,55 @@ def test_format_only_rules_stay_capped_by_weight():
     f.compute_scores()
     assert f.verdict == "maybe"
     assert f.score < 0.70
+
+
+# --- упрощённый отчёт -------------------------------------------------------
+
+def test_confirmed_only_drops_name_based_findings(monkeypatch, app_config):
+    """Упрощённый отчёт: без полей, чей вывод держится на одном названии."""
+    app_config.scan.confirmed_only = True
+    result = run(monkeypatch, app_config)
+    reported = {f.ref.full_column for t in result.tables for f in t.findings}
+
+    # diagnosis и emergency_contact опознаются по имени — их не остаётся
+    assert "diagnosis" not in reported
+    # last_name подтверждён значениями — остаётся
+    assert "last_name" in reported
+    assert all(f.confirmed_by_values for t in result.tables for f in t.findings)
+
+    # исключённое объявлено, а не пропало молча
+    assert result.options["excluded_by_filter"] > 0
+    assert any("--confirmed-only" in w for w in result.warnings)
+
+
+def test_confirmed_only_keeps_excluded_visible_in_inventory(monkeypatch,
+                                                            app_config):
+    """Полная опись — доказательство охвата, отсеянное в ней видно."""
+    app_config.scan.confirmed_only = True
+    app_config.scan.full_inventory = True
+    result = run(monkeypatch, app_config)
+    found = {f.ref.full_column: f for t in result.tables for f in t.findings}
+
+    assert "исключено фильтром" in found["diagnosis"].summary_kind
+
+
+def test_name_boost_is_configurable(monkeypatch, app_config):
+    """Коэффициент настраивается — но делает не то, что ждут от фильтра."""
+    from pii_scan.model import ColumnRef, Finding
+
+    def score(boost):
+        f = Finding(ref=ColumnRef("s", "d", "t", "c"), sampled=500, non_null=500)
+        f.hit("passport_rf").by_name = True
+        f.compute_scores(boost)
+        return f.score
+
+    assert score(0.35) == 0.35
+    assert score(0.20) == 0.20
+
+    # А вот правило, где имя решает само, коэффициенту не подчиняется —
+    # ровно поэтому для упрощённого отчёта нужен confirmed_only
+    conclusive = Finding(ref=ColumnRef("s", "d", "t", "diagnosis"),
+                         sampled=500, non_null=500)
+    conclusive.hit("health").by_name = True
+    conclusive.compute_scores(0.0)
+    assert conclusive.verdict == "pii"

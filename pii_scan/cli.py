@@ -71,6 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-rw", action="store_true",
                         help="разрешить работу под учётной записью с правами "
                              "на запись (по умолчанию запуск блокируется)")
+    parser.add_argument("--confirmed-only", action="store_true",
+                        help="упрощённый отчёт: только находки, подтверждённые "
+                             "содержимым; поля, у которых основание — одно "
+                             "имя, исключаются (их число объявляется в сводке)")
+    parser.add_argument("--name-boost", metavar="N", type=float,
+                        help="вклад совпадения по имени колонки (по умолчанию "
+                             "0.35); не путать с --confirmed-only")
     parser.add_argument("--examples", metavar="N", type=int, nargs="?",
                         const=3,
                         help="показывать N замаскированных примеров значений "
@@ -176,6 +183,10 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.scan.scan_json = False
     if args.allow_rw:
         config.scan.allow_rw = True
+    if args.confirmed_only:
+        config.scan.confirmed_only = True
+    if args.name_boost is not None:
+        config.scan.name_boost = max(0.0, min(1.0, args.name_boost))
     if args.examples is not None:
         config.scan.examples_per_hit = max(0, args.examples)
     if args.show_values:

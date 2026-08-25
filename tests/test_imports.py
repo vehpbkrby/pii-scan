@@ -94,6 +94,8 @@ def test_documented_commands_parse():
         "--limit 20000 --only prod-postgres --details",
         "--full-inventory --details",
         "--details --examples",
+        "--confirmed-only",
+        "--name-boost 0.2",
         "--examples 5",
         "--limit 100 --no-ner",
         "--strategy tail",

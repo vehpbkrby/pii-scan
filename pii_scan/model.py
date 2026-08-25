@@ -83,6 +83,7 @@ class Finding:
     scores: Dict[str, float] = field(default_factory=dict)
     dry_run: bool = False       # данные не читались — «пусто» ≠ «не смотрели»
     inferred_from: Optional[str] = None  # результат образца однотипной таблицы
+    excluded: bool = False      # отсеяна фильтром confirmed_only
 
     def hit(self, code: str) -> Hit:
         if code not in self.hits:
@@ -91,8 +92,16 @@ class Finding:
 
     # --- скоринг ---------------------------------------------------------
 
-    def compute_scores(self) -> None:
-        """score = доля совпавших значений × вес детектора (+ бонус за имя)."""
+    def compute_scores(self, name_boost: float = NAME_BOOST) -> None:
+        """score = доля совпавших значений × вес детектора (+ бонус за имя).
+
+        `name_boost` настраивается из конфига. Учтите, чего он НЕ делает:
+        правила с `name_conclusive` (здоровье, родственники, место рождения)
+        держатся на своих 0.75 помимо бонуса, а у подтверждённых значениями
+        находок он снимает законно набранную уверенность. Чтобы исключить
+        находки, за которыми нет ничего, кроме названия поля, нужен фильтр
+        `confirmed_only`, а не этот коэффициент.
+        """
         self.scores = {}
         for code, hit in self.hits.items():
             det = DETECTORS_BY_CODE.get(code)
@@ -121,7 +130,7 @@ class Finding:
             else:
                 score = min(1.0, ratio / SATURATION_RATIO) * det.weight
             if hit.by_name:
-                score += NAME_BOOST
+                score += name_boost
             if det.name_conclusive and hit.by_name:
                 # Имя не оставляет двусмысленности — вывод не зависит от того,
                 # удалось ли распознать сами значения. Берём максимум: если
@@ -202,6 +211,11 @@ class Finding:
     @property
     def summary_kind(self) -> str:
         """Вид ПДн для описи: находка, слабый сигнал или пусто."""
+        if self.excluded:
+            # В полной описи такое поле остаётся видимым: опись — это
+            # доказательство охвата, и молча показать «не обнаружено» там,
+            # где находка была отсеяна фильтром, значит соврать.
+            return "исключено фильтром: " + ", ".join(self.titles)
         if self.titles:
             return ", ".join(self.titles)
         if self.weak_titles:
