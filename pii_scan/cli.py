@@ -132,7 +132,8 @@ def setup_logging(args: argparse.Namespace) -> None:
     if not args.verbose:
         # Драйверы печатают полный traceback на каждую ошибку подключения.
         # Свою причину мы и так покажем одной строкой.
-        for noisy in ("clickhouse_connect", "urllib3", "pymysql"):
+        for noisy in ("clickhouse_connect", "clickhouse_driver", "urllib3",
+                      "pymysql", "psycopg"):
             logging.getLogger(noisy).setLevel(logging.CRITICAL)
 
 

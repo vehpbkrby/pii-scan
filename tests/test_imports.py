@@ -193,3 +193,42 @@ def test_documented_config_parameters_exist():
     stale = [n for n in re.findall(r"^\| `([a-z_]+)`", text, re.M)
              if n not in real]
     assert not stale, "описаны, но в коде отсутствуют: " + ", ".join(stale)
+
+
+def test_noisy_drivers_are_silenced():
+    """Драйверы печатают полный traceback на каждую неудачу подключения.
+
+    clickhouse-driver повторяет попытку и выдаёт два стека по пятнадцать
+    строк на один недоступный сервер. Своя причина и так печатается одной
+    строкой.
+    """
+    import argparse
+    import logging
+
+    from pii_scan.cli import setup_logging
+
+    setup_logging(argparse.Namespace(quiet=False, verbose=False))
+    for name in ("clickhouse_connect", "clickhouse_driver", "urllib3",
+                 "pymysql", "psycopg"):
+        assert logging.getLogger(name).level == logging.CRITICAL, name
+
+
+def test_clickhouse_timeout_message_is_actionable():
+    """«Code: 209» ничего не говорит о причине и о том, что делать."""
+    from pii_scan.config import ScanOptions, SourceConfig
+    from pii_scan.sources.clickhouse import ClickHouseSource
+
+    src = ClickHouseSource(
+        SourceConfig(name="prod", type="clickhouse", host="10.0.0.20",
+                     port=9000, user="pii_reader"),
+        ScanOptions(),
+    )
+    hint = src._connect_hint(Exception("Code: 209. (10.0.0.20:9000)"))
+
+    assert "10.0.0.20:9000" in hint
+    assert "таймаут" in hint
+    assert "nc -zv 10.0.0.20 8123" in hint     # подсказка про второй порт
+    assert "межсетевым экраном" in hint
+
+    bad_pwd = src._connect_hint(Exception("Authentication failed"))
+    assert "логин или пароль" in bad_pwd and "pii_reader" in bad_pwd

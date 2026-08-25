@@ -113,8 +113,42 @@ class ClickHouseSource(Source):
         else:
             self._connect_http(settings)
 
+        # clickhouse-driver соединяется лениво: Client() в сеть не ходит. Без
+        # проверки сканер сообщал бы «подключение установлено», а сокет
+        # отваливался бы по таймауту уже в середине инвентаризации.
+        self._verify_connection()
         log.info("[%s] подключение к ClickHouse %s:%s установлено (%s)",
                  self.name, cfg.host, cfg.port, self._driver)
+
+    def _verify_connection(self) -> None:
+        try:
+            self._query("SELECT 1")
+        except Exception as exc:  # noqa: BLE001
+            raise SourceError(self._connect_hint(exc)) from exc
+
+    def _connect_hint(self, exc: Exception) -> str:
+        """Понятная причина вместо «Code: 209»."""
+        cfg = self.config
+        text = str(exc)
+        where = f"{cfg.host}:{cfg.port}"
+        if "timed out" in text.lower() or "Code: 209" in text:
+            other = "8123" if cfg.port in NATIVE_PORTS else "9000"
+            proto = "нативный" if cfg.port in NATIVE_PORTS else "HTTP"
+            lines = [
+                f"{where} не отвечает: соединение оборвалось по таймауту "
+                f"({max(self.options.query_timeout, 5)} с).",
+                f"Порт {cfg.port} — это {proto} протокол ClickHouse. Сервер "
+                f"может его не слушать, или порт закрыт межсетевым экраном.",
+                "Что проверить:",
+                f"  1) доступен ли порт:   nc -zv {cfg.host} {cfg.port}",
+                f"  2) второй порт:        nc -zv {cfg.host} {other}"
+                f"  — если открыт он, укажите port: {other} в конфиге",
+                "  3) listen_host в конфигурации сервера и правила сети до него",
+            ]
+            return "\n".join(lines)
+        if "uthentication" in text or "AUTHENTICATION_FAILED" in text:
+            return f"{where}: неверный логин или пароль для '{cfg.user}'"
+        return f"{where}: {text}"
 
     def _connect_http(self, settings: dict) -> None:
         cfg = self.config
