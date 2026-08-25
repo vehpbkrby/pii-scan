@@ -707,3 +707,59 @@ def test_registry_sheets_are_split_by_verdict(tmp_path, monkeypatch, app_config)
     # расшифровка листов лежит в «Сводке» — иначе по названиям не понять
     legend = [r[0] for r in wb["Сводка"].iter_rows(values_only=True)]
     assert "Листы книги" in legend
+
+
+# --- потоковые движки и нечитаемые таблицы ----------------------------------
+
+def test_stream_engines_are_never_scanned():
+    """SELECT из Kafka-таблицы вычитывает очередь, а не читает её.
+
+    Это не предпочтение, которое можно переопределить конфигом: прогон
+    сканера не должен сдвигать offset боевой очереди. ClickHouse и сам
+    запрещает прямой SELECT, но запрет снимается настройкой сервера.
+    """
+    from pii_scan.config import SourceConfig
+
+    default = SourceConfig(name="c", type="clickhouse", host="h", port=9000,
+                           user="u")
+    for engine in ("Kafka", "RabbitMQ", "NATS", "FileLog", "S3Queue"):
+        assert engine in default.skip_engines, engine
+
+    # свой список движков не отменяет защиту
+    custom = SourceConfig(name="c", type="clickhouse", host="h", port=9000,
+                          user="u", skip_engines=["Distributed"])
+    assert "Kafka" in custom.skip_engines
+    assert "Distributed" in custom.skip_engines
+
+
+def test_clickhouse_error_drops_server_stack_trace():
+    """К ошибке ClickHouse приложен C++-стек на два десятка строк."""
+    from pii_scan.sources.clickhouse import _short_error
+
+    raw = ("Code: 620. DB::Exception: Direct select is not allowed. "
+           "Stack trace:\n\n0. DB::Exception::Exception @ 0x000f\n"
+           "1. DB::ReadFromStreamLikeEngine @ 0x00ab\n")
+    short = _short_error(Exception(raw))
+    assert short.startswith("Code: 620")
+    assert "Stack trace" not in short and "0x000f" not in short
+    assert "\n" not in short
+
+
+def test_unreadable_table_is_announced(monkeypatch, app_config):
+    """Таблица без единого прочитанного значения выглядит чистой.
+
+    Молчать об этом нельзя: охват обследования оказывается меньше
+    заявленного, а в отчёте разницы не видно.
+    """
+    from pii_scan.sources.base import Sample
+
+    def broken_sample(self, table, columns):
+        self.note_unreadable(table, "Code: 620. Direct select is not allowed")
+        return Sample()
+
+    monkeypatch.setattr(FakeSource, "sample", broken_sample)
+    result = run(monkeypatch, app_config)
+
+    assert any("значения не прочитаны в таблицах" in w
+               for w in result.warnings), result.warnings
+    assert any("Code: 620" in w for w in result.warnings)

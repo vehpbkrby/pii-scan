@@ -1,4 +1,4 @@
 # -*- coding: utf-8 -*-
 """pii-scan — поиск персональных данных (152-ФЗ) в MySQL и ClickHouse."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

@@ -23,7 +23,22 @@ DEFAULT_EXCLUDE_DB = {
     "clickhouse": ["system", "INFORMATION_SCHEMA", "information_schema"],
 }
 
-DEFAULT_SKIP_ENGINES = ["Distributed", "Merge", "Null", "View", "MaterializedView"]
+# Движки, которые ClickHouse не сканирует по умолчанию.
+#
+# Distributed, Merge и представления читают те же данные из других таблиц —
+# без пропуска одни и те же ПДн попадут в отчёт по нескольку раз.
+#
+# Kafka, RabbitMQ, NATS, FileLog и S3Queue — потоковые движки: SELECT из них
+# не читает, а ВЫЧИТЫВАЕТ сообщения из очереди, сдвигая offset. Для боевой
+# системы это потеря данных, поэтому такие таблицы не сканируются никогда.
+# ClickHouse и сам запрещает прямой SELECT (ошибка 620), но запрет снимается
+# настройкой stream_like_engine_allow_direct_select, и полагаться на него
+# нельзя.
+STREAM_ENGINES = ["Kafka", "RabbitMQ", "NATS", "FileLog", "S3Queue"]
+
+DEFAULT_SKIP_ENGINES = ([
+    "Distributed", "Merge", "Null", "View", "MaterializedView"
+] + STREAM_ENGINES)
 
 DEFAULT_PORT = {"mysql": 3306, "postgres": 5432, "clickhouse": 8123}
 
@@ -128,8 +143,15 @@ class SourceConfig:
         self.exclude_databases = list(
             dict.fromkeys(DEFAULT_EXCLUDE_DB.get(self.type, []) + self.exclude_databases)
         )
-        if self.type == "clickhouse" and not self.skip_engines:
-            self.skip_engines = list(DEFAULT_SKIP_ENGINES)
+        if self.type == "clickhouse":
+            if not self.skip_engines:
+                self.skip_engines = list(DEFAULT_SKIP_ENGINES)
+            else:
+                # Потоковые движки добавляются к любому списку: SELECT из
+                # них вычитывает очередь. Это не предпочтение, которое можно
+                # переопределить конфигом, а защита данных.
+                self.skip_engines = list(dict.fromkeys(
+                    self.skip_engines + STREAM_ENGINES))
 
     def table_allowed(self, database: str, table: str) -> bool:
         full = f"{database}.{table}"

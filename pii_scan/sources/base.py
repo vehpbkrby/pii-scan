@@ -97,6 +97,10 @@ class Source(ABC):
         self._conn = None
         self.warnings: List[str] = []   # собираются сканером в отчёт
         self.grants: List[str] = []     # сырой SHOW GRANTS — доказательство
+        # Таблицы, из которых не удалось прочитать ни одного значения.
+        # Молча пропустить их нельзя: в отчёте такая таблица выглядит
+        # чистой, и охват обследования оказывается меньше заявленного.
+        self.unreadable: List[str] = []
         from ..pacing import Pacer as _Pacer
         self.pacer = pacer or _Pacer()
 
@@ -204,6 +208,12 @@ class Source(ABC):
     @staticmethod
     def chunked(items: Sequence, size: int) -> List[Sequence]:
         return [items[i:i + size] for i in range(0, len(items), size)]
+
+    def note_unreadable(self, table: "TableInfo", reason: str) -> None:
+        """Отметить таблицу, из которой не удалось прочитать значения."""
+        entry = f"{table.display_name} ({reason})"
+        if entry not in self.unreadable:
+            self.unreadable.append(entry)
 
     def sample_parts(self, limit: int, has_order_key: bool) -> List[tuple]:
         """Разбивает выборку на части: [(сколько строк, читать ли с конца)].

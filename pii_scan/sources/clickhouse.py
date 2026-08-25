@@ -56,6 +56,17 @@ NATIVE_PORTS = frozenset({9000, 9440})
 _BAD_IDENT_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
 
 
+def _short_error(exc: Exception) -> str:
+    """Сообщение ClickHouse без стека вызовов сервера.
+
+    К ошибке прикладывается C++-стек на два десятка строк. В журнале
+    сканирования он вытесняет всё остальное, а причина стоит в первой
+    строке.
+    """
+    text = str(exc).split("Stack trace:")[0].strip()
+    return " ".join(text.split())[:300]
+
+
 def _quote(ident: str) -> str:
     """Экранирование имени объекта.
 
@@ -305,6 +316,7 @@ class ClickHouseSource(Source):
         qualified = f"{_quote(table.database)}.{_quote(table.name)}"
 
         parts = self.sample_parts(limit, bool(table.order_key))
+        last_error = ""
         for chunk in self.chunked(target, self.options.max_columns_per_query):
             select = ", ".join(
                 f"substring(toString({_quote(c.name)}), 1, {maxlen}) AS c{i}"
@@ -319,9 +331,11 @@ class ClickHouseSource(Source):
                 try:
                     part_rows = self._query(sql)
                 except Exception as exc:  # noqa: BLE001
+                    reason = _short_error(exc)
                     log.warning("[%s] %s: групповая выборка не удалась (%s), "
                                 "пробую по колонкам",
-                                self.name, table.qualified, exc)
+                                self.name, table.qualified, reason)
+                    last_error = reason
                     failed = True
                     break
                 rows.extend(part_rows)
@@ -341,6 +355,11 @@ class ClickHouseSource(Source):
                     text = str(value)
                     if text.strip():
                         bucket.append(text)
+
+        # Ни одного значения не прочиталось, хотя колонки для чтения были.
+        # В отчёте такая таблица выглядит чистой — отмечаем её отдельно.
+        if last_error and not any(result.values.values()):
+            self.note_unreadable(table, last_error)
         return result
 
     def _sample_one_by_one(self, qualified: str, chunk, limit: int,

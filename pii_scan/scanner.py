@@ -175,6 +175,16 @@ class Scanner:
                     continue
                 self.result.tables.append(self._inherit(item, origins))
 
+            if source.unreadable:
+                shown = source.unreadable[:5]
+                tail = (f" и ещё {len(source.unreadable) - 5}"
+                        if len(source.unreadable) > 5 else "")
+                self._warn(
+                    f"[{src_cfg.name}] значения не прочитаны в таблицах: "
+                    f"{len(source.unreadable)}. В отчёте они основаны только "
+                    f"на именах полей и полным обследованием не являются — "
+                    f"{'; '.join(shown)}{tail}"
+                )
             for message in source.warnings:
                 if message not in self.result.warnings:
                     self.result.warnings.append(message)
