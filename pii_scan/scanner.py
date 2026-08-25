@@ -138,6 +138,7 @@ class Scanner:
                 "scanned": len(targets),
                 "inferred": len(plan.inferred_items),
                 "read_only": not privs,
+                "skipped_databases": list(source.skipped_databases),
             })
 
             scanned: Dict[str, TableStat] = {}

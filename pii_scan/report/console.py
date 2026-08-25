@@ -125,11 +125,15 @@ def render(result: ScanResult) -> str:
     pending = result.pending_findings
     out.append(f"  Требуют проверки:        {len(result.maybe_tables)} "
                f"табл. / {len(pending)} полей")
-    if pending:
+    # В режиме --dry-run значения не читались вовсе, поэтому «только по
+    # имени поля» там верно для всего подряд и ничего не различает.
+    if pending and not result.options.get("dry_run"):
         out.append(f"    подтверждено значениями: "
                    f"{len(result.pending_confirmed)}")
         out.append(f"    только по имени поля:    "
                    f"{len(result.pending_by_name)}")
+    elif pending:
+        out.append("    значения не читались — вывод только по именам полей")
     out.append(f"  Длительность:            {result.duration_sec} с")
     if result.options.get("detectors_limited"):
         out.append(f"  Искали только:           "

@@ -152,6 +152,9 @@ class Source(ABC):
         # трафика и какой лимит по ним реально применялся.
         self.capped_tables: int = 0
         self.capped_max: int = 0
+        # Базы, до которых не добрались: в консоли список обрезается,
+        # но охват обследования должен быть виден целиком.
+        self.skipped_databases: List[str] = []
         from ..pacing import Pacer as _Pacer
         self.pacer = pacer or _Pacer()
 

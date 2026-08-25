@@ -815,3 +815,38 @@ def test_raised_limit_that_cannot_be_reached_is_announced():
     )
     assert narrow.effective_limit(cols[:3]) == 500
     assert narrow.limit_capped_note() == ""
+
+
+def test_skipped_databases_collapse_into_one_warning():
+    """Сотня баз без права CONNECT давала сотню одинаковых предупреждений.
+
+    Каждое — на три строки, с адресом сервера и локализованным DETAIL.
+    Результат прогона тонул в них.
+    """
+    from pii_scan.config import ScanOptions, SourceConfig
+    from pii_scan.sources.postgres import PostgresSource, _skip_reason
+
+    raw = ('connection failed: connection to server at "10.0.0.1", port 5432 '
+           'failed: ВАЖНО:  доступ к базе "%s" запрещён\n'
+           'DETAIL:  Пользователь не имеет привилегии CONNECT.')
+
+    # адрес сервера и имя базы из причины уходят: они и так известны
+    reason = _skip_reason(Exception(raw % "access"))
+    assert reason == "доступ к базе запрещён (Пользователь не имеет привилегии CONNECT.)"
+    assert _skip_reason(Exception(raw % "audit")) == reason   # одна причина на всех
+
+    src = PostgresSource(
+        SourceConfig(name="prod", type="postgres", host="h", port=5432,
+                     user="pii_reader"),
+        ScanOptions(),
+    )
+    names = [f"db{i:02d}" for i in range(79)]
+    src._skipped[reason] = list(names)
+    src._report_skipped()
+
+    assert len(src.warnings) == 1
+    note = src.warnings[0]
+    assert "баз пропущено: 79" in note
+    assert "привилегии CONNECT" in note
+    assert "db00" in note and "… и ещё 71" in note   # список обрезан
+    assert "10.0.0.1" not in note                    # адрес не повторяется

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, List, Optional, Sequence
 
 from .base import (
@@ -38,6 +39,34 @@ SKIP_TYPES = {
 
 WRITE_PRIVS = ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES",
                "TRIGGER", "CREATE")
+
+# Приставка psycopg, одинаковая для всех баз одного сервера
+_CONN_PREFIX_RE = re.compile(
+    r"^\s*connection failed: connection to server at [^:]+:?[^\n]*failed:\s*",
+    re.I)
+
+
+def _skip_reason(exc: Exception) -> str:
+    """Короткая причина, по которой база не открылась.
+
+    psycopg отдаёт многострочный текст: адрес сервера, локализованное
+    «ВАЖНО:» и отдельной строкой DETAIL. Адрес одинаков для всех баз
+    сервера, имя базы уже названо рядом — остаётся суть.
+    """
+    text = _CONN_PREFIX_RE.sub("", str(exc)).strip()
+    head = text.split("\n")[0].strip()
+    for label in ("ВАЖНО:", "FATAL:", "ОШИБКА:", "ERROR:"):
+        if head.startswith(label):
+            head = head[len(label):].strip()
+    detail = ""
+    for line in text.split("\n")[1:]:
+        low = line.strip()
+        if low.startswith(("DETAIL:", "ПОДРОБНОСТИ:")):
+            detail = low.split(":", 1)[1].strip()
+            break
+    # Имя базы в тексте ошибки лишнее: базы перечисляются рядом списком
+    head = re.sub(r'"[^"]+"', "", head).replace("  ", " ").strip()
+    return f"{head} ({detail})" if detail else head or str(exc)[:120]
 
 
 def _quote(ident: str) -> str:
@@ -65,6 +94,8 @@ class PostgresSource(Source):
         self._conns: Dict[str, object] = {}
         self._driver = ""
         self._entry_db = ""
+        # причина -> базы, которые по ней не открылись
+        self._skipped: Dict[str, List[str]] = {}
 
     # --- жизненный цикл ---------------------------------------------------
 
@@ -240,8 +271,10 @@ class PostgresSource(Source):
                     database=database,
                 )
             except Exception as exc:  # noqa: BLE001
-                self.warnings.append(
-                    f"[{self.name}] база {database} пропущена: {exc}")
+                # На сервере с сотней баз недоступных обычно десятки, и по
+                # строке на каждую — это экран текста с одной и той же
+                # причиной. Копим и объявляем одним пунктом.
+                self._skipped.setdefault(_skip_reason(exc), []).append(database)
                 continue
 
             keys = self._primary_keys(database)
@@ -253,7 +286,24 @@ class PostgresSource(Source):
                     is_view=relkind in ("v", "m"),
                     order_key=keys.get(f"{schema}.{name}", ""),
                 ))
+        self._report_skipped()
         return tables
+
+    def _report_skipped(self) -> None:
+        """Недоступные базы — одна строка на причину, а не на базу.
+
+        Это ещё и разрыв в охвате: обследовано меньше, чем есть на сервере,
+        и в отчёте это должно быть видно.
+        """
+        for reason, names in self._skipped.items():
+            names.sort()
+            self.skipped_databases.extend(names)
+            shown = ", ".join(names[:8])
+            tail = f" … и ещё {len(names) - 8}" if len(names) > 8 else ""
+            self.warnings.append(
+                f"[{self.name}] баз пропущено: {len(names)} — {reason}. "
+                f"Эти базы не обследованы: {shown}{tail}"
+            )
 
     def _primary_keys(self, database: str) -> Dict[str, str]:
         """Первая колонка первичного ключа — по ней читается «хвост»."""
