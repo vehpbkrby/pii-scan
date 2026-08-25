@@ -74,10 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-values", action="store_true",
                         help="не маскировать примеры значений в отчётах "
                              "(отчёт станет носителем ПДн!)")
+    parser.add_argument("--list-detectors", action="store_true",
+                        help="показать доступные категории и правила и выйти")
     parser.add_argument("--detectors", metavar="СПИСОК",
-                        help="какие категории ПДн искать, через запятую: "
-                             "фио, контакты, документы, финансы, рождение, "
-                             "спецкатегории, родственники. По умолчанию все")
+                        help="какие категории ПДн искать, через запятую. "
+                             "По умолчанию все; перечень — --list-detectors")
     parser.add_argument("--full-inventory", action="store_true",
                         help="в отчёты попадут все поля всех таблиц, включая "
                              "те, где ПДн не найдены — полная опись")
@@ -235,6 +236,11 @@ def main(argv: List[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         except (AttributeError, ValueError):
             pass
+
+    if args.list_detectors:
+        from .detectors import render_detector_list
+        print(render_detector_list())
+        return EXIT_OK
 
     try:
         formats = resolve_formats(args.formats)

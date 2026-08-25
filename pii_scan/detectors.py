@@ -549,6 +549,38 @@ def resolve_detectors(names: Sequence[str]) -> Set[str]:
     return active
 
 
+def render_detector_list() -> str:
+    """Перечень категорий и правил — печатается по --list-detectors.
+
+    Источник истины один: сам каталог. Дублировать его в документации
+    нельзя, иначе списки разойдутся при первом же изменении.
+    """
+    lines = ["Категории (группы правил):", ""]
+    for group, codes in DETECTOR_GROUPS.items():
+        titles = ", ".join(DETECTORS_BY_CODE[c].title for c in codes
+                           if c in DETECTORS_BY_CODE)
+        lines.append(f"  {group:<16} {titles}")
+
+    aliases: Dict[str, List[str]] = {}
+    for alias, group in _GROUP_ALIASES.items():
+        aliases.setdefault(group, []).append(alias)
+    lines += ["", "То же латиницей:", ""]
+    for group, names in aliases.items():
+        lines.append(f"  {group:<16} {', '.join(sorted(names))}")
+
+    lines += ["", "Отдельные правила (можно указывать поштучно):", ""]
+    for code in sorted(DETECTORS_BY_CODE):
+        det = DETECTORS_BY_CODE[code]
+        lines.append(f"  {code:<20} {det.title}")
+
+    lines += [
+        "",
+        "Пример: --detectors фио,документы  либо  --detectors snils,bank_card",
+        "По умолчанию ищутся все категории.",
+    ]
+    return "\n".join(lines)
+
+
 def describe_detectors(active: Set[str]) -> str:
     """Человеческое описание охвата — попадает в шапку отчёта."""
     if active >= set(DETECTORS_BY_CODE):
