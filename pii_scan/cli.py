@@ -271,8 +271,16 @@ def main(argv: List[str] | None = None) -> int:
         log.warning("Включён --show-values: отчёты будут содержать реальные "
                     "значения и сами станут носителями ПДн")
 
-    log.info("Конфиг: %s | источников: %d | режим: %s", path, len(config.sources),
+    # Версия в первой же строке: образ пересобирают не всегда, и понять,
+    # какая сборка сейчас работает, иначе не по чему — «поведение не
+    # изменилось» чаще означает старый образ, чем несработавший ключ.
+    log.info("pii-scan %s | конфиг: %s | источников: %d | режим: %s",
+             __version__, path, len(config.sources),
              "инвентаризация схемы" if config.scan.dry_run else "выборка значений")
+    if config.scan.examples_per_hit:
+        log.info("Примеры значений: до %d на находку (%s)",
+                 config.scan.examples_per_hit,
+                 "БЕЗ маскировки" if config.scan.show_values else "замаскированы")
     throttle = config.throttle
     if throttle.pause_ms or throttle.max_queries_per_minute or             throttle.max_duration_min:
         log.info("Ограничение нагрузки: пауза %d мс | не более %s запр./мин | "
