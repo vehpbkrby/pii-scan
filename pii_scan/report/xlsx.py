@@ -16,8 +16,11 @@ REGISTRY_HEADER = [
     "Источник", "СУБД", "База данных", "Таблица", "Поле", "Тип поля",
     "Категория ПДн", "Вид ПДн", "Третьи лица", "Уверенность", "Основание",
     "Совпало значений", "Строк в таблице (оценка)", "Комментарий к полю",
-    "Примеры (маскированные)",
 ]
+# Колонка примеров добавляется только когда их попросили ключом --examples:
+# пустой столбец в реестре читается как «примеров не нашлось», а не как
+# «их сознательно не выгружали».
+EXAMPLES_COLUMN = "Примеры (маскированные)"
 
 INVENTORY_HEADER = [
     "Источник", "СУБД", "База данных", "Таблица", "Поле", "Тип поля",
@@ -41,7 +44,8 @@ def _require_openpyxl():
     return __import__("openpyxl")
 
 
-def _row(finding: Finding, source_type: str) -> List:
+def _row(finding: Finding, source_type: str,
+         with_examples: bool = False) -> List:
     examples: List[str] = []
     for code in finding.codes:
         for ex in finding.hits[code].examples:
@@ -62,11 +66,12 @@ def _row(finding: Finding, source_type: str) -> List:
         finding.coverage,
         finding.rows_total if finding.rows_total is not None else "",
         finding.ref.comment,
-        "; ".join(examples[:3]),
-    ]
+    ] + (["; ".join(examples[:3])] if with_examples else [])
 
 
 def write_xlsx(result: ScanResult, path: str) -> None:
+    examples = bool(result.options.get("examples_per_hit"))
+    registry_header = REGISTRY_HEADER + ([EXAMPLES_COLUMN] if examples else [])
     openpyxl = _require_openpyxl()
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -102,10 +107,10 @@ def write_xlsx(result: ScanResult, path: str) -> None:
     # --- Реестр ---
     ws = wb.active
     ws.title = "Реестр"
-    setup(ws, REGISTRY_HEADER)
+    setup(ws, registry_header)
     for table in result.pii_tables:
         for finding in table.pii_findings:
-            ws.append(_row(finding, types.get(finding.ref.source, "")))
+            ws.append(_row(finding, types.get(finding.ref.source, ""), examples))
             if "специальные" in finding.categories:
                 for cell in ws[ws.max_row]:
                     cell.fill = special_fill
@@ -117,9 +122,9 @@ def write_xlsx(result: ScanResult, path: str) -> None:
     # разработчикам. Различить их можно и по колонке «Основание», но
     # вперемешку список читается как одна общая куча работы.
     ws = wb.create_sheet("Требует проверки")
-    setup(ws, REGISTRY_HEADER)
+    setup(ws, registry_header)
     for finding in result.pending_findings:
-        ws.append(_row(finding, types.get(finding.ref.source, "")))
+        ws.append(_row(finding, types.get(finding.ref.source, ""), examples))
     autosize(ws)
 
     # --- Все поля (только в режиме полной описи) ---

@@ -154,7 +154,7 @@ def render_summary(result: ScanResult) -> str:
 
 # --- подробный отчёт --------------------------------------------------------
 
-def _finding_row(finding: Finding) -> str:
+def _finding_row(finding: Finding, with_examples: bool = False) -> str:
     examples = []
     for code in finding.codes:
         examples += finding.hits[code].examples
@@ -168,13 +168,14 @@ def _finding_row(finding: Finding) -> str:
         f"{_escape(finding.ref.data_type)} | "
         f"{_escape(', '.join(finding.titles))} | "
         f"{', '.join(finding.categories) or '—'} | "
-        f"{finding.basis} | {finding.coverage} | {_fmt_score(finding.score)} | "
-        f"{_escape(', '.join(uniq[:3])) or '—'} |"
+        f"{finding.basis} | {finding.coverage} | {_fmt_score(finding.score)} |"
+        + (f" {_escape(', '.join(uniq[:3])) or '—'} |" if with_examples else "")
     )
 
 
 def render_detailed(result: ScanResult) -> str:
     lines = _header(result, "Персональные данные в БД: подробный отчёт")
+    examples = bool(result.options.get("examples_per_hit"))
 
     lines += [
         "## Как читать отчёт",
@@ -182,7 +183,10 @@ def render_detailed(result: ScanResult) -> str:
         "* **Основание** — откуда взят вывод: имя поля, значения в выборке, NER.",
         "* **Совпало** — сколько значений выборки распозналось как ПДн.",
         "* Поля вида `payload::$.client.phone` — ключи внутри JSON-значения.",
-        "* Примеры значений замаскированы; сами ПДн в отчёт не выгружаются.",
+        ("* Примеры значений замаскированы; сами ПДн в отчёт не выгружаются."
+         if result.options.get("examples_per_hit")
+         else "* Примеры значений в отчёт не выносятся вовсе; включаются "
+              "ключом `--examples`."),
         "* СНИЛС, ИНН, полис ОМС и номера карт проверены по контрольной сумме — "
         "ложные срабатывания на них практически исключены.",
         "* Специальные категории и сведения о родственниках определяются "
@@ -208,13 +212,13 @@ def render_detailed(result: ScanResult) -> str:
                 f"отметки: {_flags(table)}",
                 "",
                 "| Поле | Тип | Вид ПДн | Категория | Основание | Совпало | "
-                "Уверенность | Примеры (маск.) |",
-                "|---|---|---|---|---|---|---|---|",
+                "Уверенность |" + (" Примеры (маск.) |" if examples else ""),
+                "|---|---|---|---|---|---|---|" + ("---|" if examples else ""),
             ]
             for finding in table.findings:
                 if finding.verdict == "no":
                     continue
-                lines.append(_finding_row(finding))
+                lines.append(_finding_row(finding, examples))
             lines.append("")
 
     if result.options.get("full_inventory"):

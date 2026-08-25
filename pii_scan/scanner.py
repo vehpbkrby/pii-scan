@@ -64,6 +64,8 @@ class Scanner:
             "detectors": describe_detectors(self.active),
             "detectors_limited": len(self.active) < len(resolve_detectors([])),
             "dry_run": self.options.dry_run,
+            "examples_per_hit": self.options.examples_per_hit,
+            "show_values": self.options.show_values,
             "scan_json": self.options.scan_json,
             "ner": self.options.ner,
             "allow_rw": self.options.allow_rw,

@@ -93,6 +93,8 @@ def test_documented_commands_parse():
         "--list-detectors",
         "--limit 20000 --only prod-postgres --details",
         "--full-inventory --details",
+        "--details --examples",
+        "--examples 5",
         "--limit 100 --no-ner",
         "--strategy tail",
         "--formats xlsx",

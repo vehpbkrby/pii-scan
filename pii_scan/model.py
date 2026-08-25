@@ -220,17 +220,25 @@ class Finding:
 
     @property
     def basis(self) -> str:
-        """Основание вывода — для колонки «Основание» в реестре."""
+        """Основание вывода — для колонки «Основание» в отчётах.
+
+        Когда сработало одно название поля, пишем «только имя поля», а не
+        «имя поля»: иначе разница между подтверждённым и неподтверждённым
+        выводом читается как отсутствие слова «значения» в соседней ячейке,
+        а отсутствие в таблице на сотню строк никто не замечает.
+        """
         if self.inferred_from:
             return f"по образцу {self.inferred_from}"
         parts = []
         codes = set(self.codes)
         if any(self.hits[c].by_name for c in codes if c in self.hits):
             parts.append("имя поля")
-        if any(self.hits[c].matched for c in codes if c in self.hits):
+        if self.confirmed_by_values:
             parts.append("значения")
         if codes & {"ner_person", "ner_location"}:
             parts.append("NER")
+        if parts == ["имя поля"]:
+            return "только имя поля"
         return ", ".join(parts) or "—"
 
 

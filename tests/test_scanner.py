@@ -516,3 +516,51 @@ def test_pending_field_inside_pii_table_is_counted():
     assert result.maybe_tables == []            # таблица уже числится с ПДн
     assert len(result.pending_findings) == 1    # а поле всё равно на разборе
     assert result.pending_by_name[0].ref.column == "passport_seria"
+
+
+def test_examples_are_off_by_default(monkeypatch, app_config):
+    """Маска оставляет длину, формат и первые символы — это тоже утечка.
+
+    Отчёт уходит разработчикам и внешним проверяющим, поэтому примеры
+    значений включаются осознанно, а не достаются по умолчанию.
+    """
+    from pii_scan.config import ScanOptions
+    from pii_scan.report.markdown import render_detailed
+
+    assert ScanOptions().examples_per_hit == 0
+
+    result = run(monkeypatch, app_config)
+    assert all(not hit.examples
+               for f in result.all_findings for hit in f.hits.values())
+    report = render_detailed(result)
+    assert "Примеры (маск.)" not in report          # столбца в таблицах нет
+    assert "включаются ключом `--examples`" in report  # но умолчание названо
+
+
+def test_examples_appear_when_asked(monkeypatch, app_config):
+    from pii_scan.report.markdown import render_detailed
+
+    app_config.scan.examples_per_hit = 2
+    result = run(monkeypatch, app_config)
+    collected = [hit.examples
+                 for f in result.all_findings for hit in f.hits.values()]
+    assert any(collected)
+    assert all(len(ex) <= 2 for ex in collected)
+    assert "Примеры (маск.)" in render_detailed(result)
+
+
+def test_basis_names_the_unconfirmed_case(monkeypatch, app_config):
+    """«имя поля» и «только имя поля» — разница, которую надо видеть."""
+    from pii_scan.model import ColumnRef, Finding
+
+    only_name = Finding(ref=ColumnRef("s", "d", "t", "passport_seria"),
+                        non_null=500)
+    only_name.hit("passport_rf").by_name = True
+    only_name.compute_scores()
+    assert only_name.basis == "только имя поля"
+
+    both = Finding(ref=ColumnRef("s", "d", "t", "snils"), non_null=500)
+    hit = both.hit("snils")
+    hit.by_name, hit.matched = True, 500
+    both.compute_scores()
+    assert both.basis == "имя поля, значения"

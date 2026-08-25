@@ -71,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-rw", action="store_true",
                         help="разрешить работу под учётной записью с правами "
                              "на запись (по умолчанию запуск блокируется)")
+    parser.add_argument("--examples", metavar="N", type=int, nargs="?",
+                        const=3,
+                        help="показывать N замаскированных примеров значений "
+                             "(по умолчанию не показывать; без числа — 3)")
     parser.add_argument("--show-values", action="store_true",
                         help="не маскировать примеры значений в отчётах "
                              "(отчёт станет носителем ПДн!)")
@@ -172,8 +176,14 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.scan.scan_json = False
     if args.allow_rw:
         config.scan.allow_rw = True
+    if args.examples is not None:
+        config.scan.examples_per_hit = max(0, args.examples)
     if args.show_values:
         config.scan.show_values = True
+        if config.scan.examples_per_hit <= 0:
+            # Просить незамаскированные примеры и не просить примеров —
+            # противоречие; выбираем то, что человек имел в виду.
+            config.scan.examples_per_hit = 3
     if args.full_inventory:
         config.scan.full_inventory = True
     if args.detectors:

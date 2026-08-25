@@ -45,6 +45,7 @@ def render_details(result: ScanResult) -> str:
     """
     out: List[str] = []
     full = bool(result.options.get("full_inventory"))
+    examples = bool(result.options.get("examples_per_hit"))
     tables = result.tables if full else result.pii_tables + result.maybe_tables
     if not tables:
         return ""
@@ -69,8 +70,9 @@ def render_details(result: ScanResult) -> str:
         header = ["Поле", "Тип"]
         if full:
             header.append("Вердикт")
-        header += ["Вид ПДн", "Категория", "Основание", "Совпало", "Увер.",
-                   "Примеры (маск.)"]
+        header += ["Вид ПДн", "Категория", "Основание", "Совпало", "Увер."]
+        if examples:
+            header.append("Примеры (маск.)")
         for f in sorted(findings, key=lambda x: (-x.score, x.ref.full_column)):
             row = [f.ref.full_column, f.ref.data_type or "—"]
             if full:
@@ -81,8 +83,9 @@ def render_details(result: ScanResult) -> str:
                 f.basis,
                 f.coverage,
                 f"{f.score:.0%}" if f.score else "—",
-                "; ".join(_examples(f)) or "—",
             ]
+            if examples:
+                row.append("; ".join(_examples(f)) or "—")
             rows.append(row)
         out.append(_indent(_table(rows, header)))
 
