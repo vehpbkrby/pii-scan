@@ -180,7 +180,24 @@ if [ ! -f "$REPO_DIR/config/config.yml" ]; then
     cp "$REPO_DIR/config.example.yml" "$REPO_DIR/config/config.yml"
     ok "создан config/config.yml из примера — отредактируйте адреса и учётки"
 else
-    ok "config/config.yml уже есть, не трогаю"
+    ok "config/config.yml уже есть, не трогаю — в нём ваши адреса и пароли"
+    # Пример обновляется вместе с кодом, а рабочий конфиг остаётся прежним.
+    # Молчать об этом нельзя: новые параметры иначе не найти.
+    TMP_NEW="$(mktemp)"; TMP_OLD="$(mktemp)"
+    grep -oE '^ +#? *[a-z_]+:' "$REPO_DIR/config.example.yml" 2>/dev/null \
+        | tr -d ' #:' | sort -u > "$TMP_NEW"
+    grep -oE '^ +#? *[a-z_]+:' "$REPO_DIR/config/config.yml" 2>/dev/null \
+        | tr -d ' #:' | sort -u > "$TMP_OLD"
+    new_count=$(comm -23 "$TMP_NEW" "$TMP_OLD" | wc -l | tr -d ' ')
+    if [ "${new_count:-0}" -gt 0 ]; then
+        new_keys=$(comm -23 "$TMP_NEW" "$TMP_OLD" | head -6 | tr '\n' ' ')
+        [ "$new_count" -gt 6 ] && new_keys="$new_keys… и ещё $((new_count - 6))"
+        warn "в примере есть параметры, которых нет у вас ($new_count): $new_keys"
+        say  "  посмотреть:  diff -u ${REPO_DIR}/config/config.yml ${REPO_DIR}/config.example.yml"
+        say  "  описание:    README, раздел «Параметры конфига»"
+        say  "  все параметры необязательны — без них работают значения по умолчанию"
+    fi
+    rm -f "$TMP_NEW" "$TMP_OLD"
 fi
 
 if [ ! -f "$REPO_DIR/.env" ]; then
