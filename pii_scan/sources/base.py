@@ -148,6 +148,10 @@ class Source(ABC):
         # Молча пропустить их нельзя: в отчёте такая таблица выглядит
         # чистой, и охват обследования оказывается меньше заявленного.
         self.unreadable: List[str] = []
+        # Сколько таблиц не дотянули до заданного sample_limit из-за потолка
+        # трафика и какой лимит по ним реально применялся.
+        self.capped_tables: int = 0
+        self.capped_max: int = 0
         from ..pacing import Pacer as _Pacer
         self.pacer = pacer or _Pacer()
 
@@ -347,9 +351,29 @@ class Source(ABC):
         per_row = max(1, len(columns) * max(8, self.options.max_value_len // 8))
         allowed = max(50, budget // per_row)
         if allowed < limit:
+            # Заданный лимит недостижим — это надо сказать вслух. Иначе
+            # «--limit 20000» выглядит применённым, а читается втрое меньше,
+            # и о том, что упёрлись в трафик, знает только debug-журнал.
             log.debug("[%s] выборка уменьшена до %d строк (%d колонок)",
                       self.name, allowed, len(columns))
+            self.capped_tables += 1
+            self.capped_max = max(self.capped_max, allowed)
         return min(limit, allowed)
+
+    def limit_capped_note(self) -> str:
+        """Предупреждение о недостижимом лимите — пусто, если всё прочиталось."""
+        if not self.capped_tables:
+            return ""
+        mb = self.options.max_bytes_per_table / 1_000_000
+        return (
+            f"[{self.name}] задано {self.options.sample_limit} строк на "
+            f"таблицу, но выборка ограничена трафиком "
+            f"(max_bytes_per_table = {mb:g} МБ): в {self.capped_tables} "
+            f"таблицах прочитано не более {self.capped_max} строк. "
+            f"Чтобы читать больше, поднимайте max_bytes_per_table вместе с "
+            f"--limit — широкая таблица иначе вытянет по сети десятки "
+            f"мегабайт."
+        )
 
 
 def build_source(config: SourceConfig, options: ScanOptions,

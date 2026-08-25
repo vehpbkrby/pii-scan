@@ -783,3 +783,35 @@ def test_whole_table_refusal_skips_column_fallback():
     assert not _refuses_whole_table(
         "Code: 44. Illegal type AggregateFunction of argument")
     assert not _refuses_whole_table("Code: 241. Memory limit exceeded")
+
+
+def test_raised_limit_that_cannot_be_reached_is_announced():
+    """`--limit 20000` на широкой таблице читает втрое меньше.
+
+    Потолок трафика (max_bytes_per_table) режет выборку раньше, чем
+    кончаются строки. Прежде об этом знал только debug-журнал, и ключ
+    выглядел применённым.
+    """
+    from pii_scan.config import ScanOptions, SourceConfig
+    from pii_scan.sources.base import ColumnInfo
+    from pii_scan.sources.mysql import MySQLSource
+
+    src = MySQLSource(
+        SourceConfig(name="prod", type="mysql", host="h", port=3306, user="u"),
+        ScanOptions(sample_limit=20000),
+    )
+    cols = [ColumnInfo(database="d", table="t", name=f"c{i}") for i in range(10)]
+
+    assert src.effective_limit(cols) < 20000        # лимит недостижим
+    note = src.limit_capped_note()
+    assert "20000" in note
+    assert "max_bytes_per_table" in note
+    assert "1 таблицах" in note
+
+    # узкая таблица укладывается в бюджет — предупреждать не о чем
+    narrow = MySQLSource(
+        SourceConfig(name="prod", type="mysql", host="h", port=3306, user="u"),
+        ScanOptions(sample_limit=500),
+    )
+    assert narrow.effective_limit(cols[:3]) == 500
+    assert narrow.limit_capped_note() == ""

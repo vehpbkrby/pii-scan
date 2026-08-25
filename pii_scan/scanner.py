@@ -175,6 +175,9 @@ class Scanner:
                     continue
                 self.result.tables.append(self._inherit(item, origins))
 
+            capped = source.limit_capped_note()
+            if capped:
+                self._warn(capped)
             if source.unreadable:
                 shown = source.unreadable[:5]
                 tail = (f" и ещё {len(source.unreadable) - 5}"
