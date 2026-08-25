@@ -673,3 +673,37 @@ def test_name_boost_is_configurable(monkeypatch, app_config):
     conclusive.hit("health").by_name = True
     conclusive.compute_scores(0.0)
     assert conclusive.verdict == "pii"
+
+
+def test_registry_sheets_are_split_by_verdict(tmp_path, monkeypatch, app_config):
+    """Каждый лист реестра — один вердикт, поэтому колонки «вердикт» в нём нет.
+
+    Разделение и есть ответ на вопрос «где окончательный вывод»: «Реестр» —
+    находки, «Требует проверки» — материал для разбора.
+    """
+    pytest.importorskip("openpyxl")
+    import openpyxl
+
+    from pii_scan.report.xlsx import write_xlsx
+
+    result = run(monkeypatch, app_config)
+    path = tmp_path / "registry.xlsx"
+    write_xlsx(result, str(path))
+    wb = openpyxl.load_workbook(path)
+
+    assert wb.sheetnames[0] == "Реестр"          # книга открывается на выводе
+    assert "Требует проверки" in wb.sheetnames
+    assert "Сводка" in wb.sheetnames
+
+    def verdicts(sheet):
+        col = [f.ref.full_column for t in result.tables for f in t.findings]
+        names = {c.value for c in wb[sheet]["E"] if c.value in col}
+        return {f.verdict for t in result.tables for f in t.findings
+                if f.ref.full_column in names}
+
+    assert verdicts("Реестр") == {"pii"}
+    assert verdicts("Требует проверки") == {"maybe"}
+
+    # расшифровка листов лежит в «Сводке» — иначе по названиям не понять
+    legend = [r[0] for r in wb["Сводка"].iter_rows(values_only=True)]
+    assert "Листы книги" in legend

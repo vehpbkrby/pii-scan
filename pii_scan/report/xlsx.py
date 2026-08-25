@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Реестр в XLSX — под перечень обрабатываемых ПДн.
 
-Три листа:
-  Реестр            — уверенные находки, по одной строке на поле;
-  Требует проверки  — пограничные, для ручного разбора;
-  Сводка            — по таблицам и категориям.
+Листы книги разделены по вердикту, поэтому колонки «вердикт» в них нет:
+
+  Реестр            — вердикт «ПДн»: уверенные находки, строка на поле;
+  Требует проверки  — вердикт «требует проверки»: пограничные находки;
+  Все поля          — все поля всех таблиц, только при full_inventory;
+  Сводка            — по таблицам, счётчики прогона и состав книги.
 """
 from __future__ import annotations
 
@@ -105,6 +107,8 @@ def write_xlsx(result: ScanResult, path: str) -> None:
             ws.column_dimensions[letter].width = min(max(longest + 2, 10), 45)
 
     # --- Реестр ---
+    # Лист вердикта «ПДн»: сюда попадает то, что идёт в перечень
+    # обрабатываемых персональных данных без дополнительного разбора.
     ws = wb.active
     ws.title = "Реестр"
     setup(ws, registry_header)
@@ -179,10 +183,29 @@ def write_xlsx(result: ScanResult, path: str) -> None:
     ws.append(["Режим", "инвентаризация схемы"
                if result.options.get("dry_run") else "выборка значений"])
     ws.append(["Таблиц с ПДн", len(result.pii_tables)])
+    ws.append(["Полей с ПДн", sum(len(t.pii_findings) for t in result.tables)])
     ws.append(["Таблиц на проверку", len(result.maybe_tables)])
     ws.append(["Полей на ручной разбор", len(result.pending_findings)])
     ws.append(["  подтверждено значениями", len(result.pending_confirmed)])
     ws.append(["  только по имени поля", len(result.pending_by_name)])
+
+    # Какой лист что означает. Названия листов сами по себе не говорят,
+    # где окончательный вывод, а где материал для разбора.
+    ws.append([])
+    ws.append(["Листы книги", "Вердикт", "Что внутри"])
+    for cell in ws[ws.max_row]:
+        cell.font = head_font
+    for row in [
+        ["Реестр", "ПДн",
+         "уверенные находки: поле содержит персональные данные"],
+        ["Требует проверки", "требует проверки",
+         "сигнала недостаточно для вывода, нужен человек"],
+        ["Все поля", "все три",
+         "полная опись, включая чистые поля (ключ --full-inventory)"
+         if result.options.get("full_inventory")
+         else "лист не создан: нужен ключ --full-inventory"],
+    ]:
+        ws.append(row)
     autosize(ws)
 
     wb.save(path)
