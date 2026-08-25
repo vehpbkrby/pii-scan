@@ -148,3 +148,48 @@ def test_documented_detector_counts_match_catalog():
     rest = re.search(r"Оставшиеся (\w+) —", text)
     words = {"два": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6}
     assert rest and words.get(rest.group(1)) == total - by_content
+
+
+def test_every_config_parameter_is_documented():
+    """Каждое поле конфига должно быть описано в справочнике README.
+
+    Справочник, отставший от кода, хуже отсутствующего: по нему настраивают
+    прогон на проде. Новый параметр без строки в README роняет этот тест.
+    """
+    import re
+    from dataclasses import fields
+    from pathlib import Path
+
+    from pii_scan.config import ScanOptions, SourceConfig, ThrottleOptions
+
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    section = readme.read_text(encoding="utf-8").split("### Параметры конфига")
+    assert len(section) == 2, "в README нет раздела «Параметры конфига»"
+    text = section[1].split("### Ключи запуска")[0]
+
+    documented = set(re.findall(r"\| `([a-z_]+)`", text))
+    missing = []
+    for cls in (ScanOptions, ThrottleOptions, SourceConfig):
+        for f in fields(cls):
+            if f.name not in documented:
+                missing.append(f"{cls.__name__}.{f.name}")
+    assert not missing, "не описаны в README: " + ", ".join(missing)
+
+
+def test_documented_config_parameters_exist():
+    """И наоборот: описанного параметра не должно не быть в коде."""
+    import re
+    from dataclasses import fields
+    from pathlib import Path
+
+    from pii_scan.config import ScanOptions, SourceConfig, ThrottleOptions
+
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8").split(
+        "### Параметры конфига")[1].split("### Ключи запуска")[0]
+
+    real = {f.name for cls in (ScanOptions, ThrottleOptions, SourceConfig)
+            for f in fields(cls)}
+    stale = [n for n in re.findall(r"^\| `([a-z_]+)`", text, re.M)
+             if n not in real]
+    assert not stale, "описаны, но в коде отсутствуют: " + ", ".join(stale)
