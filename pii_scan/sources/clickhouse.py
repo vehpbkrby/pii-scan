@@ -56,6 +56,24 @@ NATIVE_PORTS = frozenset({9000, 9440})
 _BAD_IDENT_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
 
 
+# Отказы, относящиеся к таблице целиком: перебирать её по колонкам
+# бессмысленно, запрос упрётся в то же самое. Перебор нужен для обратного
+# случая — когда одна экзотическая колонка ломает выборку всей таблицы.
+_WHOLE_TABLE_REFUSALS = (
+    "stream_like_engine_allow_direct_select",   # потоковый движок, код 620
+    "Direct select is not allowed",
+    "Not enough privileges",
+    "ACCESS_DENIED",
+    "UNKNOWN_TABLE",
+    "Table default",                            # «... doesn't exist»
+    "TABLE_IS_DROPPED",
+)
+
+
+def _refuses_whole_table(reason: str) -> bool:
+    return any(marker in reason for marker in _WHOLE_TABLE_REFUSALS)
+
+
 def _short_error(exc: Exception) -> str:
     """Сообщение ClickHouse без стека вызовов сервера.
 
@@ -332,10 +350,19 @@ class ClickHouseSource(Source):
                     part_rows = self._query(sql)
                 except Exception as exc:  # noqa: BLE001
                     reason = _short_error(exc)
+                    last_error = reason
+                    if _refuses_whole_table(reason):
+                        # Отказ относится к таблице целиком. Перебор по
+                        # колонкам повторил бы тот же запрос столько раз,
+                        # сколько в ней полей, — а на потоковом движке
+                        # каждая такая попытка ещё и трогает очередь.
+                        log.warning("[%s] %s: таблица не читается (%s)",
+                                    self.name, table.qualified, reason)
+                        self.note_unreadable(table, reason)
+                        return result
                     log.warning("[%s] %s: групповая выборка не удалась (%s), "
                                 "пробую по колонкам",
                                 self.name, table.qualified, reason)
-                    last_error = reason
                     failed = True
                     break
                 rows.extend(part_rows)

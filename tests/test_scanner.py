@@ -763,3 +763,23 @@ def test_unreadable_table_is_announced(monkeypatch, app_config):
     assert any("значения не прочитаны в таблицах" in w
                for w in result.warnings), result.warnings
     assert any("Code: 620" in w for w in result.warnings)
+
+
+def test_whole_table_refusal_skips_column_fallback():
+    """Перебор по колонкам осмыслен не для всякой ошибки.
+
+    Отказ движка относится к таблице целиком: повтор по колонкам упрётся в
+    то же самое столько раз, сколько в таблице полей, а на потоковом движке
+    каждая попытка ещё и трогает очередь.
+    """
+    from pii_scan.sources.clickhouse import _refuses_whole_table
+
+    assert _refuses_whole_table(
+        "Code: 620. DB::Exception: Direct select is not allowed. To enable "
+        "use setting `stream_like_engine_allow_direct_select`.")
+    assert _refuses_whole_table("Code: 497. Not enough privileges")
+
+    # а вот это ломает одну колонку, тут перебор и нужен
+    assert not _refuses_whole_table(
+        "Code: 44. Illegal type AggregateFunction of argument")
+    assert not _refuses_whole_table("Code: 241. Memory limit exceeded")
